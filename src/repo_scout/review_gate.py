@@ -1,24 +1,20 @@
-"""Content-bound, signed technical reviews. No private signing key is loaded here."""
+"""Local, content-bound dual review records and explicit operator approvals."""
 from __future__ import annotations
 
-import base64
 import json
-import os
 import sqlite3
 import uuid
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
-from cryptography.exceptions import InvalidSignature
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from pydantic import BaseModel, ConfigDict, Field
 
 from .bundle import secret_reason
 from .common import canonical, digest, redact
 
-VERSION = 'strict-dual-1'
+VERSION = 'local-dual-2'
 ROLES = ('reviewer_a', 'reviewer_b')
+REVIEWERS = {'reviewer_a':'gpt', 'reviewer_b':'cc'}
 
 
 class Evidence(BaseModel):
@@ -35,40 +31,6 @@ class Decision(BaseModel):
     disagreements: list[str]
     rationale: str = Field(min_length=1)
     reviewed_at: str = Field(min_length=1)
-
-
-def policy(store):
-    # For embedded callers the operator may supply a trust object. Never read
-    # trust roots from candidate JSON, a target repository or mutable DB rows.
-    p = getattr(store, 'review_trust', None)
-    if p is None:
-        name = os.environ.get('REPO_SCOUT_REVIEW_TRUST')
-        if not name:
-            raise ValueError('BLOCKED: operator review trust file not configured')
-        p = json.loads(Path(name).read_text('utf-8'))
-    keys, identities, deployments = set(), set(), set()
-    for role in (*ROLES, 'human'):
-        entry = p.get(role, {})
-        key = base64.b64decode(entry.get('public_key',''), validate=True)
-        if len(key) != 32 or key in keys:
-            raise ValueError('BLOCKED: distinct Ed25519 trust roots required')
-        keys.add(key)
-        if role != 'human':
-            identity = entry.get('canonical_model_id','').strip().casefold()
-            deployment = tuple(str(entry.get(k,'')).strip().casefold() for k in ('provider','model'))
-            if not identity or identity in identities or deployment in deployments or not all(entry.get(k) for k in ('provider','model','model_version')):
-                raise ValueError('BLOCKED: distinct verified canonical model identities required')
-            identities.add(identity)
-            deployments.add(deployment)
-    return p
-
-
-def verify(key, data, signature):
-    try:
-        Ed25519PublicKey.from_public_bytes(base64.b64decode(key, validate=True)).verify(
-            base64.b64decode(signature, validate=True), canonical(data).encode())
-    except (InvalidSignature, TypeError, ValueError) as exc:
-        raise ValueError('BLOCKED: invalid signed receipt') from exc
 
 
 def artifact(store, subject, kind):
@@ -124,17 +86,20 @@ def artifact(store, subject, kind):
 
 def start(store, subject, kind):
     with store.atomic():
+        if kind == 'finding' and store.require('finding', subject)['status'] not in (
+                'CC_VALIDATING', 'CONFIRMED', 'CHANGES_REQUESTED'):
+            raise ValueError('BLOCKED: re-enter validation before replacing the finding review')
         a = artifact(store,subject,kind)
         rid = uuid.uuid4().hex
         store.connection.execute('INSERT INTO review_rounds(id,subject,kind,artifact,policy) VALUES(?,?,?,?,?)',
-                                 (rid,subject,kind,digest(a),digest(policy(store))))
+                                 (rid,subject,kind,digest(a),digest([VERSION, REVIEWERS])))
         return rid
 
 
 def _round(store, subject, kind):
     row = store.connection.execute('SELECT * FROM review_rounds WHERE subject=? AND kind=? ORDER BY seq DESC LIMIT 1',(subject,kind)).fetchone()
     a = artifact(store,subject,kind)
-    if not row or row['artifact'] != digest(a) or row['policy'] != digest(policy(store)):
+    if not row or row['artifact'] != digest(a) or row['policy'] != digest([VERSION, REVIEWERS]):
         raise ValueError('BLOCKED: missing round or changed artifact/policy')
     return row, a
 
@@ -148,7 +113,6 @@ def packet(store, subject, kind, role, phase, *, _current=None):
     if role not in ROLES or phase not in ('independent','final'):
         raise ValueError('Invalid reviewer or phase')
     row, a = _current or _round(store,subject,kind)
-    identity = policy(store)[role]
     context = dict(a)
     if phase == 'independent':
         if kind == 'finding':
@@ -167,7 +131,7 @@ def packet(store, subject, kind, role, phase, *, _current=None):
     binding = {'round_id':row['id'],'finding_id':subject,'artifact_type':kind,'artifact_digest':row['artifact'],
                'source_commit_sha':a['source_commit_sha'],'repository':a['repository'],'phase':phase,'reviewer_id':role,
                'prompt_version':VERSION,'policy_digest':row['policy'],'prior_reports':{k:digest(v) for k,v in prior.items()},
-               **{k:identity[k] for k in ('provider','model','model_version','canonical_model_id')}}
+               'provider':REVIEWERS[role]}
     binding['context_digest'] = digest(context)
     text = canonical(context)
     if secret_reason(text) or redact(text)!=text:
@@ -177,12 +141,25 @@ def packet(store, subject, kind, role, phase, *, _current=None):
 
 def _validate(store, subject, kind, role, phase, envelope, *, _current=None):
     p = packet(store,subject,kind,role,phase,_current=_current)
-    if envelope.get('binding') != p['binding'] or set(envelope) != {'binding','decision','signature'}:
+    if envelope.get('binding') != p['binding'] or set(envelope) != {'binding','decision'}:
         raise ValueError('BLOCKED: receipt binding mismatch')
     d = Decision.model_validate(envelope['decision'])
-    verify(policy(store)[role]['public_key'],{'binding':p['binding'],'decision':envelope['decision']},envelope['signature'])
-    if store.get('cc_session',d.session_id) or d.session_id == p['context'].get('implementer_session'):
+    sessions = {d.session_id}
+    prefix = p['binding']['provider'] + ':'
+    if d.session_id.startswith(prefix):
+        sessions.add(d.session_id[len(prefix):])
+    review_context = p['context'].get('diff', {}) if kind == 'submission' else p['context']
+    if review_context.get('implementer_session') in sessions or any(store.get('cc_session', s) for s in sessions):
         raise ValueError('BLOCKED: need a fresh independent reviewer session')
+    # Older reports retain their original spelling. Compare both legitimate
+    # spellings without rewriting that history or conflating provider IDs.
+    bare = d.session_id.removeprefix(prefix)
+    if store.connection.execute(
+        '''SELECT 1 FROM review_receipts WHERE session IN (?, ?) AND
+           NOT (round_id=? AND role=? AND phase=?) LIMIT 1''',
+        (bare, prefix + bare, p['binding']['round_id'], role, phase),
+    ).fetchone():
+        raise ValueError('BLOCKED: reviewer session already used')
     if d.verdict == 'PASS' and not any(e.kind in ('SOURCE_CONFIRMED','DOCUMENTATION_CONFIRMED','RUNTIME_REPRODUCED') for e in d.evidence):
         raise ValueError('BLOCKED: PASS needs verified evidence')
     if kind == 'diff' and not p['context']['tests'] and d.verdict == 'PASS' and not any(e.kind=='NOT_APPLICABLE' for e in d.evidence):
@@ -208,7 +185,7 @@ def receive(store,subject,kind,envelope):
                 except ValueError:
                     pass  # both decisions remain evidence; never promote a conflict
                 else:
-                    store.put('finding',subject,{**f,'status':'CONFIRMED','evidence_status':'CONFIRMED'},expected_version=f['_version'],reason='two signed finals on current evidence')
+                    store.put('finding',subject,{**f,'status':'CONFIRMED','evidence_status':'CONFIRMED'},expected_version=f['_version'],reason='two final reviews on current evidence')
     return {'round_id':b['round_id'],'verdict':d.verdict,'phase':b['phase']}
 
 
@@ -237,22 +214,13 @@ def status(store,subject,kind):
     return {'status':'PASSED','proof':proof,'reports':reports}
 
 
-def human_gate(store, kind, subject, payload, actor, reason, receipt=None):
-    """Preview first. Only the separate operator signer can authorize a write."""
-    fields = {'protocol':VERSION,'kind':kind,'subject':subject,'digest':digest(payload),'actor':actor,'reason':reason}
-    if receipt is None:
-        return {'challenge':{**fields,'nonce':uuid.uuid4().hex,'expires_at':(datetime.now(timezone.utc)+timedelta(hours=48)).isoformat()},'payload':payload}
-    c = receipt['challenge']
-    if c != {**fields,'nonce':c.get('nonce'),'expires_at':c.get('expires_at')} or not c['nonce']:
-        raise ValueError('Human approval challenge does not match current content')
-    verify(policy(store)['human']['public_key'],c,receipt['signature'])
-    if datetime.fromisoformat(c['expires_at']) <= datetime.now(timezone.utc):
-        raise ValueError('Human authorization expired')
-    with store.atomic():
-        store.put('human_nonce',c['nonce'],receipt,expected_version=0,reason='consume signed human intent')
-        approval = store.approve(kind,subject,digest(payload),actor=actor,reason=reason)
-        store.put('human_receipt',approval['id'],receipt,expected_version=0,reason='signed human authorization')
-    return approval
+def human_gate(store, kind, subject, payload, actor, reason, confirm_digest=None):
+    expected = digest(payload)
+    if confirm_digest is None:
+        return {'approval_digest':expected,'payload':payload}
+    if confirm_digest != expected:
+        raise ValueError('Approval preview no longer matches current content')
+    return store.approve(kind,subject,expected,actor=actor,reason=reason)
 
 
 def authorized(store, kind, subject, payload, *, consume=False, used_id=None):
@@ -264,11 +232,4 @@ def authorized(store, kind, subject, payload, *, consume=False, used_id=None):
                 raise ValueError('No consumed implementation authorization for this plan')
         else:
             row = store.check_approval(kind,subject,digest(payload),consume=consume)
-        r = store.require('human_receipt',row['id'])
-        c = r['challenge']
-        verify(policy(store)['human']['public_key'],c,r['signature'])
-        if (c['kind'],c['subject'],c['digest'],c['actor'],c['reason']) != (kind,subject,digest(payload),row['actor'],row['reason']):
-            raise ValueError('Signed human authorization does not match stored approval')
-        if not used_id and datetime.fromisoformat(c['expires_at']) <= datetime.now(timezone.utc):
-            raise ValueError('Signed human authorization expired')
         return dict(row)

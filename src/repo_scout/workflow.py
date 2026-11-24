@@ -33,7 +33,7 @@ def add_finding(store, payload: dict) -> dict:
     return store.put("finding", clean["finding_id"], clean, reason="candidate imported; no bug confirmation implied", actor="import")
 
 
-def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: list[str], receipt=None) -> dict:
+def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: list[str], confirm_digest=None) -> dict:
     finding = store.require("finding", finding_id)
     if finding["status"] not in {"CONFIRMED", "CHANGES_REQUESTED"}:
         raise ValueError("Only confirmed findings or explicit requested revisions may be approved")
@@ -59,8 +59,8 @@ def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: lis
                "previous_head_sha": submission.get("head_sha") if revision else None}
     with store.atomic():
         payload.update(review=gate.require(store,finding_id,'finding'), contribution_type=finding['validation']['recommended_action'])
-        approval = gate.human_gate(store,'implementation',finding_id,payload,actor,plan,receipt)
-        if receipt is None:
+        approval = gate.human_gate(store,'implementation',finding_id,payload,actor,plan,confirm_digest)
+        if confirm_digest is None:
             return approval
         updated = store.put("finding", finding_id, {**finding, "status": "HUMAN_APPROVED", "implementation_payload": payload,
                            "implementation_approval_id": approval["id"]}, reason="human approved exact implementation scope", actor=actor,
@@ -311,15 +311,15 @@ def _submission_authority(store,f,current):
             'implementation_approval_id':f['implementation_approval_id']}
 
 
-def approve_submission(store, finding_id: str, *, reviewed_digest: str, actor: str, reason: str, receipt=None) -> dict:
+def approve_submission(store, finding_id: str, *, reviewed_digest: str, actor: str, reason: str, confirm_digest=None) -> dict:
     finding = store.require("finding", finding_id)
     validate_transition(finding["status"], "APPROVED_TO_SUBMIT")
     current = store.require("draft", finding_id)
     if current["digest"] != reviewed_digest or digest(current["draft"]) != reviewed_digest:
         raise ValueError("The supplied digest is not the exact current draft")
     with store.atomic():
-        approval = gate.human_gate(store,'submission',finding_id,_submission_authority(store,finding,current),actor,reason,receipt)
-        if receipt is None:
+        approval = gate.human_gate(store,'submission',finding_id,_submission_authority(store,finding,current),actor,reason,confirm_digest)
+        if confirm_digest is None:
             return {**approval,'package':gate.artifact(store,finding_id,'submission'),'reviews':gate.status(store,finding_id,'submission')}
         store.put("finding", finding_id, {**finding, "status": "APPROVED_TO_SUBMIT"}, reason="final human submission approval",
                   actor=actor, expected_version=finding["_version"])
@@ -541,14 +541,14 @@ async def prepare_profile(store, client, root: Path, config: dict) -> dict:
     return value
 
 
-def approve_profile(store, config: dict, *, reviewed_digest: str, actor: str, reason: str, receipt=None) -> dict:
+def approve_profile(store, config: dict, *, reviewed_digest: str, actor: str, reason: str, confirm_digest=None) -> dict:
     current = store.require("profile_draft", config["profile_repository"])
     if current["digest"] != reviewed_digest or digest(current["draft"]) != reviewed_digest:
         raise ValueError("Profile approval must match the exact current diff")
     if not current["draft"]["diff"]:
         raise ValueError("No Profile changes to approve")
     subject = config['profile_repository']
-    return gate.human_gate(store,'profile',subject,[reviewed_digest,gate.require(store,subject,'profile')],actor,reason,receipt)
+    return gate.human_gate(store,'profile',subject,[reviewed_digest,gate.require(store,subject,'profile')],actor,reason,confirm_digest)
 
 
 async def publish_profile(store, client, config: dict) -> dict:

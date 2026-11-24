@@ -62,7 +62,7 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--budget", type=float, default=2.0)
     commands.add_parser("run-validation", help="为未验证的候选生成最新 preflight 和 CC 任务包")
     approve = commands.add_parser("approve", help="第一道批准：具体实施/Review修订方案")
-    approve.add_argument('--receipt',type=Path)
+    approve.add_argument('--confirm-digest', help='Confirm the exact approval_digest returned by preview')
     for cmd in ('review-start','review-packet','review-import','review-status'):
         sub = commands.add_parser(cmd)
         sub.add_argument('subject')
@@ -114,7 +114,7 @@ def parser() -> argparse.ArgumentParser:
         if name != "prepare-issue":
             cp.add_argument("--fork", required=True)
     final = commands.add_parser("approve-submit", help="第二道批准：绑定完整草稿 Digest")
-    final.add_argument('--receipt',type=Path)
+    final.add_argument('--confirm-digest', help='Confirm the exact approval_digest returned by preview')
     final.add_argument("finding_id")
     final.add_argument("--digest", required=True)
     final.add_argument("--actor", required=True)
@@ -144,7 +144,7 @@ def parser() -> argparse.ArgumentParser:
     preview.add_argument("--readme", type=Path)
     commands.add_parser("profile-draft", help="验证 Profile 仓库存在，读取实际 README 后只修改贡献区域")
     profile_approve = commands.add_parser("approve-profile")
-    profile_approve.add_argument('--receipt',type=Path)
+    profile_approve.add_argument('--confirm-digest', help='Confirm the exact approval_digest returned by preview')
     profile_approve.add_argument("--digest", required=True)
     profile_approve.add_argument("--actor", required=True)
     profile_approve.add_argument("--reason", required=True)
@@ -218,7 +218,6 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
         if command=='review-import':
             return gate.receive(store,subject,kind,json.loads(args.file.read_text('utf-8')))
         return gate.status(store,subject,kind)
-    receipt = json.loads(args.receipt.read_text('utf-8')) if getattr(args,'receipt',None) else None
     username = config["username"]
     output = root / "reports" / "discovery"
     if command == "doctor":
@@ -322,7 +321,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
             raise ValueError('Sensitive assessment withheld')
         return _apply_assessment(store,root,args.finding_id,json.loads(text),attested_cc=False,provenance='candidate-evidence')
     if command == "approve":
-        return workflow.approve_finding(store, args.finding_id, actor=args.actor, plan=args.plan, scope=args.scope,receipt=receipt)
+        return workflow.approve_finding(store, args.finding_id, actor=args.actor, plan=args.plan, scope=args.scope,confirm_digest=args.confirm_digest)
     if command == "implement":
         finding = store.require("finding", args.finding_id)
         if finding.get("implementation_payload", {}).get("revision") and finding["status"] == "HUMAN_APPROVED":
@@ -366,7 +365,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
                                       submission_type={"prepare-pr": "PR", "prepare-issue": "ISSUE", "prepare-update": "PR_UPDATE"}[command],
                                       title=args.title, body=args.body_file.read_text(), risk=args.risk, fork=getattr(args, "fork", ""))
     if command == "approve-submit":
-        return workflow.approve_submission(store, args.finding_id, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,receipt=receipt)
+        return workflow.approve_submission(store, args.finding_id, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,confirm_digest=args.confirm_digest)
     if command in {"submit", "reconcile-submit"}:
         async with _client(store, config) as client:
             if command == "submit":
@@ -446,7 +445,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
         async with _client(store, config) as client:
             return await workflow.prepare_profile(store, client, root, config)
     if command == "approve-profile":
-        return workflow.approve_profile(store, config, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,receipt=receipt)
+        return workflow.approve_profile(store, config, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,confirm_digest=args.confirm_digest)
     if command == "profile-publish":
         async with _client(store, config) as client:
             return await workflow.publish_profile(store, client, config)

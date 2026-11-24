@@ -20,7 +20,7 @@ from repo_scout.followup import record_issue_acceptance, sync_submission
 from repo_scout.github import GitHubError
 from repo_scout.implementation import (commit_changes, git, head, run_command)
 from repo_scout.portfolio import sync_ledger
-from repo_scout.validation import accept_validation, preflight
+from repo_scout.validation import _apply_assessment as accept_validation, preflight
 from repo_scout.workflow import (add_finding, approve_finding, approve_profile,
                                  approve_submission, begin_implementation,
                                  mark_testing, prepare_draft, prepare_profile,

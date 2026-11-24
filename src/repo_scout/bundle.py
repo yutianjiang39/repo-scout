@@ -22,7 +22,7 @@ EXCLUDED_DIRS = {
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "htmlcov",
     "coverage", ".next", "vendor", "third_party", ".tox", ".idea", ".vscode",
 }
-SENSITIVE_NAMES = {".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa",
+SENSITIVE_NAMES = {".mcp.json", ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa",
                    "id_ed25519", "secrets.json", "secrets.yaml", "secrets.yml"}
 BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip",
                    ".gz", ".tar", ".7z", ".mp3", ".mp4", ".wav", ".woff", ".woff2",
@@ -30,11 +30,14 @@ BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".z
 SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b"),
-    re.compile(r"\bAKIA[A-Z0-9]{16}\b"),
+    re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
+    re.compile(r"(?i)\bbearer\s+[\w./+=~-]{8,}"),
+    re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s/@:]+:[^\s/@]+@"),
     re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{24,}\b"),
     re.compile(r"\bAIza[A-Za-z0-9_-]{30,}\b"),
     re.compile(r"(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password)"
-               r"\s*[:=]\s*['\"]([A-Za-z0-9/+_=.-]{16,})['\"]"),
+               r"['\"]?\s*[:=]\s*['\"]([^'\"\r\n]{4,})['\"]"),
+    re.compile(r"(?im)^\s*(?:aws_secret_access_key|password|api[_-]?key|access[_-]?token)\s*[:=]\s*(?!os\.environ\b|os\.getenv\b)([^\s'\"#]{4,})"),
 ]
 
 
@@ -44,7 +47,7 @@ def secret_reason(content: str) -> str | None:
         for match in pattern.finditer(content):
             sample = match.group(1) if match.lastindex else match.group(0)
             # Explicit documentation placeholders are not credentials.
-            if any(word in sample.lower() for word in ("example", "placeholder", "your_api", "changeme")):
+            if sample.lower() in {"example", "placeholder", "your_api_key", "changeme"}:
                 continue
             return "possible_hardcoded_secret"
     return None
@@ -186,10 +189,11 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
         directory = Path(directory)
         for name in sorted(dirnames[:]):
             p = directory / name
-            if p.is_symlink() or name in EXCLUDED_DIRS:
+            hidden = name.startswith('.') and name.casefold() != '.github'
+            if p.is_symlink() or hidden or name.casefold() in EXCLUDED_DIRS:
                 dirnames.remove(name)
                 excluded.append({"path": p.relative_to(root).as_posix() + "/",
-                                 "reason": "symlink" if p.is_symlink() else "generated_or_vendor_directory"})
+                                 "reason": "symlink" if p.is_symlink() else "private_configuration" if hidden and name not in EXCLUDED_DIRS else "generated_or_vendor_directory"})
         for name in sorted(filenames):
             path = directory / name
             relative = path.relative_to(root).as_posix()
@@ -198,6 +202,8 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
                 reason = "symlink"
             elif name.lower().startswith(".env") or name.lower() in SENSITIVE_NAMES or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}:
                 reason = "sensitive_filename"
+            elif name.startswith('.') or name.casefold() in {'claude.md', 'agents.md', 'gemini.md', 'mcp.json'}:
+                reason = "private_configuration"
             elif path.suffix.lower() in BINARY_SUFFIXES:
                 reason = "binary_or_media"
             elif name.endswith((".min.js", ".min.css", ".map")):

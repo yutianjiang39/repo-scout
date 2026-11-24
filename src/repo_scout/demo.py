@@ -19,7 +19,7 @@ from .database import Store
 from .followup import followup_report, sync_submission
 from .implementation import commit_changes, git, head, run_command
 from .portfolio import export_portfolio, render_profile, sync_ledger
-from .validation import accept_validation, make_cc_packet, preflight
+from .validation import _apply_assessment as accept_validation, make_cc_packet, preflight
 from .workflow import (add_finding, apply_implementation_patch, approve_finding,
                        approve_submission, begin_implementation, mark_testing,
                        prepare_draft, record_diff_review)

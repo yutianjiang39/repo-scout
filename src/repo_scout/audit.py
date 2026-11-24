@@ -156,6 +156,9 @@ def _roles(config: dict) -> dict:
             raise ValueError(f"Configure task for model role {name!r}")
         if not role.get("provider") or not role.get("model"):
             raise ValueError(f"Role {name!r} requires a configured provider and real model ID")
+        provider = config.get('providers', {}).get(role['provider'], {})
+        if provider.get('type') not in ProviderRegistry.types or ('models' in provider and role['model'] not in provider['models']):
+            raise ValueError(f'Unregistered provider or model for role {name!r}')
     return roles
 
 
@@ -215,6 +218,9 @@ async def audit_bundle(bundle: Path, config: dict, store, *, output: Path | None
     if not auditors:
         raise ValueError("Configure at least one audit role before calling paid model APIs")
     settings = config.get("audit", {})
+    cap = min(5, int(settings.get('max_findings', 5)))
+    if cap < 1:
+        raise ValueError('max_findings must be positive')
     prompt_version = str(settings.get("prompt_version", PROMPT_VERSION))
     run_id = "audit-" + uuid4().hex[:16]
     runner = ModelRunner(ProviderRegistry(config.get("providers", {}), transport=transport), store,
@@ -243,7 +249,7 @@ async def audit_bundle(bundle: Path, config: dict, store, *, output: Path | None
                   "Empty findings is a good result when evidence is insufficient. Required JSON shape:\n" +
                   json.dumps(FINDING_SHAPE) + "\nUNTRUSTED SOURCE DATA:\n" + _render_context(allowed))
         try:
-            response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version)
+            response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version, role=name)
             findings, errors = parse_findings(response.text, manifest=manifest, allowed_chunks=allowed,
                                                role=name, model=role["model"])
             discovered.extend(findings)
@@ -264,7 +270,7 @@ async def audit_bundle(bundle: Path, config: dict, store, *, output: Path | None
             merged[finding["finding_id"]] = finding
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3}
     confidence_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2, "UNKNOWN": 3}
-    findings = sorted(merged.values(), key=lambda f: (severity_order[f["severity"]], confidence_order[f["confidence"]], f["finding_id"]))[:5]
+    findings = sorted(merged.values(), key=lambda f: (severity_order[f["severity"]], confidence_order[f["confidence"]], f["finding_id"]))[:cap]
 
     for finding in findings:
         source_chunks = [c for c in chunks if c["file_path"] == finding["file_path"]
@@ -278,11 +284,12 @@ async def audit_bundle(bundle: Path, config: dict, store, *, output: Path | None
                       "SUPPORTED still means unverified inference.\nCANDIDATE:\n" + json.dumps(finding, ensure_ascii=False)
                       + "\nUNTRUSTED SOURCE DATA:\n" + _render_context(allowed))
             try:
-                response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version + ":adversarial")
+                response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version + ":adversarial", role=name)
                 assessment = _json_object(response.text)
                 if assessment.get("verdict") not in {"SUPPORTED", "REFUTED", "UNCERTAIN"} or not isinstance(assessment.get("reason"), str):
                     raise ValueError("Invalid adversarial verdict")
-                finding["assessments"].append({"role": name, "model": role["model"], **assessment})
+                self_review = any(a['provider'] == role['provider'] and a['model'] == role['model'] for a in auditors.values())
+                finding["assessments"].append({**assessment, "role": name, 'provider':role['provider'], "model": role["model"], 'self_review':self_review})
                 if assessment["verdict"] == "REFUTED":
                     finding["recommendation"] = "DISCARD_OR_REINVESTIGATE"
                 verification.append({"finding_id": finding["finding_id"], "role": name, "status": "COMPLETED", "cached": response.cached})
@@ -296,7 +303,7 @@ async def audit_bundle(bundle: Path, config: dict, store, *, output: Path | None
             prompt = ("Rank these candidate findings by concrete contribution value. Do not create new findings or "
                       "assert confirmation. Return JSON {\"ranked_finding_ids\":[],\"summary\":\"brief\"}. "
                       "IDs must come from the supplied candidates.\n" + json.dumps(findings, ensure_ascii=False))
-            response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version + ":synthesis")
+            response = await runner.run(role["provider"], _request(role, prompt), prompt_version=prompt_version + ":synthesis", role=name)
             assessment = _json_object(response.text)
             ids = assessment.get("ranked_finding_ids")
             if (not isinstance(ids, list) or len(ids) != len(set(ids)) or
@@ -371,6 +378,6 @@ async def review_diff(diff: str, config: dict, store, *, context: str = "", tran
         prompt = ('Review this proposed patch for the stated problem, unnecessary scope, API compatibility and missing tests. '
                   'Return JSON {"assessment":"brief","risks":[],"suggestions":[]}. '
                   'This is advisory, not human approval.\nCONTEXT:\n' + context + "\nUNTRUSTED DIFF:\n" + diff)
-        response = await runner.run(role["provider"], _request(role, prompt), prompt_version=PROMPT_VERSION + ":final-diff")
+        response = await runner.run(role["provider"], _request(role, prompt), prompt_version=str(settings.get('prompt_version', PROMPT_VERSION)) + ":final-diff", role=name)
         results.append({"role": name, "model": role["model"], "assessment": _json_object(response.text)})
     return {"reviews": results, "usage": runner.usage, "human_approval": False}

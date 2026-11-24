@@ -4,7 +4,9 @@
 
 自动入口在一个空的临时目录调用已安装的 Claude Code CLI，使用 bare mode、空工具列表和空 MCP 配置，只通过 stdin 输入筛选后的上下文，独立解析 `structured_output` 并执行 Pydantic 校验。它不会读取旧会话，也不会执行仓库中的 hooks、配置或脚本。
 
-验证使用 `ValidationReport` schema；修复阶段在已有方案批准后只要求 CC 生成 unified diff，再由程序进行文件范围检查和 Git apply。测试执行是另外一项经过检查的操作，公开写入是另外一项内容绑定的批准。
+默认手工模式无需 API Key。先执行 `repo-scout preflight ID` 和 `repo-scout cc-packet ID`，在独立新会话中仅提供返回的 `cc_prompt.txt`。不要提供整个报告目录或工作区。用 `repo-scout validate ID --report blind.json --attest-cc` 导入与上下文哈希匹配的盲审报告；此步骤不会确认 Finding。再执行 `repo-scout cc-compare-packet ID`，按第二份 schema 比较候选判断与盲审证据，用 `repo-scout validate ID --comparison --report comparison.json --attest-cc` 导入。存在分歧时保存两份原始报告并转为待调查。旧版单阶段报告不是盲审报告。
+
+修复阶段在已有方案批准后只要求 CC 生成 unified diff，再由程序进行文件范围检查和 Git apply。测试执行和公开写入分别需要检查和内容绑定的批准。
 
 上下文有固定大小上限；需要更多调用链或依赖证据时应返回 BLOCKED，而不是猜测。外部 Claude Code 会话也能导入报告，但必须由操作人明确 `--attest-cc`，报告会保留 operator-import 来源，不能冒充内置 CLI 实际调用记录。
 
@@ -15,4 +17,4 @@
 - [Run Claude Code programmatically](https://code.claude.com/docs/en/headless)：`-p`、stdin、bare mode、JSON `structured_output`。
 - [CLI reference](https://code.claude.com/docs/en/cli-reference)：`--tools`、`--disallowedTools`、`--strict-mcp-config`、`--setting-sources`、`--json-schema`、`--max-budget-usd`。
 
-本次交付没有真实调用 Claude Code；可运行协议和报告校验有单元/集成测试，真实 CLI 版本、身份和计费需在部署环境确认。
+本机已检查 Claude Code 2.1.302 的 `--version` 和 `--help`。其 bare 模式不会加载订阅登录；API Runner 的真实计费及部署环境的认证仍需联调。手工导入的模型及 CLI 版本是操作者声明，不是供应商认证。

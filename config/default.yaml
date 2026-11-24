@@ -21,6 +21,11 @@ search:
 screening:
   max_inactive_days: 180
   allow_unknown_license: false
+  maximum_size_kb: 50000
+  preferred_size_kb: {min: 100, max: 10000}
+  preferred_stars: {min: 50, max: 1000}
+  preferred_forks: {min: 5, max: 200}
+  preferred_owner_types: [User]
 scoring:
   threshold: 70
 providers: {}

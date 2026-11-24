@@ -21,13 +21,16 @@ class CliTests(unittest.TestCase):
         self.env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"),
                     "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
                     "PYTHONDONTWRITEBYTECODE": "1", "LANG": "C.UTF-8"}
+        self.env['PYTHONUTF8'] = '1'
+        if 'SystemRoot' in os.environ:
+            self.env['SystemRoot'] = os.environ['SystemRoot']
 
     def tearDown(self):
         self.temp.cleanup()
 
     def call(self, *argv, env=None):
         return subprocess.run([sys.executable, "-m", "repo_scout", "--home", str(self.home), *map(str, argv)],
-                              cwd=self.root, env=env or self.env, text=True, capture_output=True, timeout=20)
+                              cwd=self.root, env=env or self.env, text=True, encoding='utf-8', capture_output=True, timeout=20)
 
     def successful_json(self, *argv):
         result = self.call(*argv)

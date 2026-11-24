@@ -39,6 +39,9 @@ def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: lis
     require_fresh_preflight(finding)
     if finding.get("validation", {}).get("result") != "CONFIRMED":
         raise ValueError("Independent confirmed validation is required")
+    validate_transition(finding['status'], 'HUMAN_APPROVED')
+    if finding['validation'].get('source_sha') != finding['base_sha']:
+        raise ValueError('Validation belongs to a different source commit')
     if not plan.strip():
         raise ValueError("An implementation/revision plan is required")
     for p in scope:
@@ -69,6 +72,8 @@ def begin_implementation(store, root: Path, finding_id: str) -> dict:
     if finding["status"] != "HUMAN_APPROVED":
         raise ValueError("Explicit implementation approval is required")
     payload = finding["implementation_payload"]
+    if payload['base_sha'] != finding['base_sha'] or payload['validation_hash'] != digest(finding['validation']):
+        raise ValueError('Implementation approval no longer matches validation or commit')
     store.check_approval("implementation", finding_id, digest(payload))
     if payload.get("revision"):
         current_submission = store.require("submission", finding["submission_id"])

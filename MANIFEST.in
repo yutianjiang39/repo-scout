@@ -1,0 +1,9 @@
+include AGENTS.md config/default.yaml
+recursive-include docs *.md
+recursive-include deploy *.service *.timer
+recursive-include tests *.py
+prune .repo-scout
+prune pilot-data
+prune pilot-readonly-week
+prune validation
+global-exclude *.sqlite* *.db *.pem *.key .env* *.pyc

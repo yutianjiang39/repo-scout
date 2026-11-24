@@ -65,12 +65,17 @@ class BundleTests(unittest.TestCase):
         (self.repo / "node_modules" / "code.js").write_text("not sent")
         outside = self.base / "outside"
         outside.write_text("private information")
-        (self.repo / "linked.txt").symlink_to(outside)
+        try:
+            (self.repo / "linked.txt").symlink_to(outside)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) != 1314:
+                raise
         result = prepare_bundle(self.repo, self.output, repository="upstream/client")
         self.assertEqual([item["path"] for item in result["files"]], ["src/client.py"])
         excluded = {item["path"]: item["reason"] for item in result["excluded"]}
         self.assertEqual(excluded["credential.py"], "possible_hardcoded_secret")
-        self.assertEqual(excluded["linked.txt"], "symlink")
+        if (self.repo / 'linked.txt').is_symlink():
+            self.assertEqual(excluded["linked.txt"], "symlink")
         self.assertEqual((self.repo / "src/client.py").read_bytes(), original)
         self.assertEqual((self.output / "files/src/client.py").read_bytes(), original)
         self.assertTrue((self.repo / ".env").exists())
@@ -91,11 +96,32 @@ class BundleTests(unittest.TestCase):
         self.assertFalse(copy.exists())
         self.assertTrue(source.exists())
 
+    def test_private_configuration_never_enters_chunks(self):
+        token = 'ghp_' + 'z' * 36
+        names = ['.mcp.json','.cursor/config','.claude/settings','.env.local','.unknown/settings','ordinary.yaml']
+        for name in names:
+            path = self.repo / name
+            path.parent.mkdir(exist_ok=True)
+            path.write_text(token)
+        manifest = prepare_bundle(self.repo,self.output)
+        self.assertFalse(manifest['files'])
+        reasons = {x['path']:x['reason'] for x in manifest['excluded']}
+        self.assertEqual(reasons['.cursor/'], 'private_configuration')
+        self.assertEqual(reasons['.mcp.json'], 'sensitive_filename')
+        self.assertEqual(reasons['ordinary.yaml'], 'possible_hardcoded_secret')
+        self.assertNotIn(token,(self.output/'chunks.json').read_text())
+        self.assertTrue(all((self.repo/n).read_text()==token for n in names))
+
     def test_output_cannot_modify_original_or_follow_output_symlinks(self):
         (self.repo / "client.py").write_text("value = 1\n")
         with self.assertRaises(ValueError):
             prepare_bundle(self.repo, self.repo / "bundle")
-        self.output.symlink_to(self.repo, target_is_directory=True)
+        try:
+            self.output.symlink_to(self.repo, target_is_directory=True)
+        except OSError as exc:
+            if getattr(exc, 'winerror', None) == 1314:
+                self.skipTest('Windows account lacks symlink privilege')
+            raise
         with self.assertRaises(ValueError):
             prepare_bundle(self.repo, self.output)
 
@@ -236,9 +262,19 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ProviderError):
             await provider.generate(self.request)
         self.assertEqual(len(calls), 1)
+
         with self.assertRaises(ProviderError):
             await provider.generate(ModelRequest("mock-model", "JSON", "test", parameters={"tools": []}))
         self.assertEqual(len(calls), 1)
+
+    async def test_ambiguous_generation_blocks_after_restart(self):
+        for status in (500,502,503,504):
+            calls = []
+            reg = ProviderRegistry({'p':{'type':'openai',**self.config()}},transport=httpx.MockTransport(lambda req: calls.append(req) or httpx.Response(status)))
+            for run_id in ('before','after'):
+                with self.assertRaises(ProviderError):
+                    await ModelRunner(reg,self.store,run_id=run_id).run('p',self.request,prompt_version=str(status))
+            self.assertEqual(len(calls),1)
 
     async def test_missing_credentials_and_unsafe_config_fail_before_network(self):
         with patch.dict(os.environ, {}, clear=True):
@@ -299,7 +335,7 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         record = self.store.list("model_usage")[0]
         self.assertFalse(record["usage_complete"])
         self.assertIsNone(record["input_tokens"])
-        self.assertEqual(record["status"], "FAILED_OR_AMBIGUOUS")
+        self.assertEqual(record["status"], "REJECTED")
 
 
 class AuditTests(unittest.IsolatedAsyncioTestCase):

@@ -26,6 +26,10 @@ class BudgetExceeded(ProviderError):
     pass
 
 
+class RequestRejected(ProviderError):
+    """The service explicitly denied the request, or it was not sent."""
+
+
 @dataclass(frozen=True)
 class ModelRequest:
     model: str
@@ -133,7 +137,7 @@ class HTTPProvider:
     def _headers(self) -> dict:
         key = os.environ.get(self.api_key_env)
         if not key:
-            raise ProviderError(f"Missing API credential environment variable: {self.api_key_env}")
+            raise RequestRejected(f"Missing API credential environment variable: {self.api_key_env}")
         if self.provider_type == "anthropic":
             return {"x-api-key": key, "anthropic-version": self.config.get("api_version", "2023-06-01")}
         if self.provider_type == "gemini":
@@ -173,14 +177,15 @@ class HTTPProvider:
                 except httpx.TransportError:
                     # Processing may already have happened: never replay an ambiguous generation.
                     raise ProviderError("Model transport failed; outcome/charge unknown; no automatic replay") from None
-                if response.status_code in {429, 500, 502, 503, 504, 529} and attempt < self.retries:
+                if response.status_code == 429 and attempt < self.retries:
                     delay = _retry_delay(response.headers.get("retry-after"), self.retry_base * 2 ** attempt)
                     if delay > self.max_backoff:
-                        raise ProviderError("Provider requested a longer backoff; retry this run later")
+                        raise RequestRejected("Provider requested a longer backoff; retry this run later")
                     await asyncio.sleep(delay)
                     continue
                 if not 200 <= response.status_code < 300:
-                    raise ProviderError(f"Model API returned HTTP {response.status_code}; response body withheld")
+                    error = RequestRejected if response.status_code in {400,401,403,404,422,429} else ProviderError
+                    raise error(f"Model API returned HTTP {response.status_code}; response body withheld")
                 try:
                     result = self._parse(response.json())
                 except (ValueError, KeyError, TypeError, IndexError, AttributeError):
@@ -190,6 +195,7 @@ class HTTPProvider:
                 if secret_reason(result.text):
                     raise ProviderError("Possible credential in model output; response withheld")
                 result.attempts = attempt + 1
+                result.usage_details['model_version'] = _request_id(response.json().get('modelVersion') or response.json().get('model'))
                 result.request_id = _request_id(response.headers.get("x-request-id")) or result.request_id
                 result.cost_usd = self._estimate_cost(result, request.model)
                 return result
@@ -375,7 +381,7 @@ class ModelRunner:
         self.usage: list[dict] = []
         self._key_locks: dict[str, asyncio.Lock] = {}
 
-    async def run(self, provider_name: str, request: ModelRequest, *, prompt_version: str = "1") -> ModelResponse:
+    async def run(self, provider_name: str, request: ModelRequest, *, prompt_version: str = "1", role: str = 'unspecified') -> ModelResponse:
         provider = self.registry.get(provider_name)
         key = stable_hash({"provider": provider.public_config(), "request": asdict(request), "prompt_version": prompt_version})
         # Identical concurrent work shares the same durable response.
@@ -407,21 +413,27 @@ class ModelRunner:
                 self.reserved_input += reserved_in
                 self.reserved_output += reserved_out
                 self.reserved_cost += estimated_cost or 0.0
+            meta = {'prompt_version':prompt_version, 'task_role':role, 'provider':provider_name, 'model':request.model}
+            with self.store.atomic():
+                if self.store.cache_get('model_pending', key):
+                    raise ProviderError('Prior request is in flight or its usage is unknown; reconcile before replay')
+                self.store.cache_set('model_pending', key, {**meta, 'status':'PENDING'})
             try:
                 async with self.semaphore:
                     result = await provider.generate(request)
-            except ProviderError:
-                entry = {"cache_key": key, "run_id": self.run_id, "provider": provider_name,
+            except ProviderError as exc:
+                entry = {**meta, "cache_key": key, "run_id": self.run_id, "provider": provider_name,
                          "model": request.model, "cached": False, "input_tokens": None,
                          "output_tokens": None, "cost_usd": None, "usage_known": False,
-                         "usage_complete": False, "status": "FAILED_OR_AMBIGUOUS",
+                         "usage_complete": False, "status": "REJECTED" if isinstance(exc, RequestRejected) else 'UNKNOWN_USAGE',
                          "reserved_input_tokens": reserved_in, "reserved_output_tokens": reserved_out}
                 self.usage.append(entry)
-                self.store.put("model_usage", stable_hash([self.run_id, key]), entry,
-                               reason="Model request failed; usage may be unknown", actor="model-runner")
+                with self.store.atomic():
+                    self.store.cache_set('model_pending', key, {} if isinstance(exc, RequestRejected) else entry)
+                    self.store.put("model_usage", stable_hash([self.run_id, key]), entry,
+                                   reason="Model request failed; usage may be unknown", actor="model-runner")
                 raise
-            self.store.cache_set("model_response", key, asdict(result))
-            entry = {"cache_key": key, "run_id": self.run_id, "provider": provider_name,
+            entry = {**meta, 'status':'COMPLETED', 'model_version':result.usage_details.get('model_version'), "cache_key": key, "run_id": self.run_id, "provider": provider_name,
                      "model": request.model, "cached": False, "input_tokens": result.input_tokens,
                      "output_tokens": result.output_tokens, "cost_usd": result.cost_usd,
                      "usage_known": result.usage_known, "attempts": result.attempts,
@@ -429,6 +441,9 @@ class ModelRunner:
                      "estimated_input_tokens": input_estimate,
                      "reserved_input_tokens": reserved_in, "reserved_output_tokens": reserved_out}
             self.usage.append(entry)
-            self.store.put("model_usage", stable_hash([self.run_id, key]), entry,
-                           reason="Model request usage", actor="model-runner")
+            with self.store.atomic():
+                self.store.cache_set("model_response", key, asdict(result))
+                self.store.cache_set('model_pending', key, {})
+                self.store.put("model_usage", stable_hash([self.run_id, key]), entry,
+                               reason="Model request usage", actor="model-runner")
             return result

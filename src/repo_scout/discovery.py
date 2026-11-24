@@ -159,9 +159,12 @@ def screen(store: Any, config: dict, output: Path) -> dict:
             reasons.append("OWN_REPOSITORY")
         license_id = record.get("license")
         if license_id in {None, "", "NOASSERTION", "OTHER"}:
-            unknown.append("LICENSE_REVIEW_REQUIRED")
+            if not policy.get('allow_unknown_license', False):
+                unknown.append("LICENSE_REVIEW_REQUIRED")
         elif license_id not in allowed:
             reasons.append("LICENSE_OUTSIDE_CONFIGURED_ALLOWLIST")
+        if record.get('size_kb') is not None and record['size_kb'] > policy.get('maximum_size_kb', 50000):
+            reasons.append('SIZE_LIMIT')
         pushed = _date(record.get("pushed_at"))
         age = (now - pushed).total_seconds() / 86400 if pushed else None
         if age is None:
@@ -197,7 +200,10 @@ def is_maintainer(item: dict, owner: str, trusted: set[str] | None = None) -> bo
 
 
 def _external(pr: dict, owner: str, trusted: set[str]) -> bool | None:
-    if (pr.get("user") or {}).get("type") == "Bot":
+    user = pr.get('user') or {}
+    if not user.get('login'):
+        return None
+    if user.get('type') == 'Bot' or user['login'].lower().endswith('[bot]'):
         return False
     if is_maintainer(pr, owner, trusted):
         return False
@@ -330,6 +336,11 @@ async def analyze_maintainers(client: GitHubClient, store: Any, config: dict, ou
 
 def score(store: Any, config: dict, output: Path) -> dict:
     settings = config.get("scoring", {})
+    policy = config.get('screening', {})
+    threshold = settings.get('threshold', 70)
+    def preference(value, field, default):
+        bounds = policy.get(field, default)
+        return 100 if bounds['min'] <= value <= bounds['max'] else 70
     weights = settings.get("weights", {
         "maintainer_openness": 25, "repository_activity": 20, "technical_fit": 20,
         "community_attention": 15, "engineering_opportunities": 10, "contribution_scope": 10,
@@ -361,22 +372,24 @@ def score(store: Any, config: dict, output: Path) -> dict:
         stars, forks = record.get("stars"), record.get("forks")
         attention = None
         if stars is not None and forks is not None:
-            attention = min(70, 70 * math.log1p(stars) / math.log1p(1000)) + min(30, 30 * math.log1p(forks) / math.log1p(200))
+            attention = .7 * preference(stars, 'preferred_stars', {'min':50,'max':1000}) + .3 * preference(forks, 'preferred_forks', {'min':5,'max':200})
         dimension("community_attention", attention, {"stars": stars, "forks": forks}, "Small active projects remain eligible regardless of star count.")
         invitation = maintainer.get("metrics", {}).get("invitation_labels_seen", [])
         manual = record.get("opportunity_assessment")
         opportunity = float(manual["score"]) if isinstance(manual, dict) and manual.get("evidence") and "score" in manual else 70 if invitation else None
         dimension("engineering_opportunities", opportunity, manual or {"invitation_labels_seen": invitation}, "Invitations are not proof of bugs. Unknown means targeted inspection is still needed.")
         size = record.get("size_kb")
-        scope = 100 if size is not None and size <= 10000 else 70 if size is not None and size <= 50000 else 35 if size is not None else None
-        dimension("contribution_scope", scope, {"repository_size_kb": size}, "GitHub repository size is a coarse scope proxy, not source lines or complexity.")
+        scope = preference(size, 'preferred_size_kb', {'min':100,'max':10000}) if size is not None else None
+        if scope is not None and record.get('owner_type') is not None and policy.get('preferred_owner_types', ['User']):
+            scope = .95 * scope + (5 if record['owner_type'] in policy.get('preferred_owner_types', ['User']) else 0)
+        dimension("contribution_scope", scope, {"repository_size_kb": size, 'owner_type':record.get('owner_type')}, "Size and owner type are scope preferences, not evidence of maintainer openness.")
         observed = sum(d["value"] * d["weight"] / 100 for d in dims.values() if d["value"] is not None)
         unknown_weight = sum(d["weight"] for d in dims.values() if d["value"] is None)
         full = unknown_weight == 0
         estimate = round(observed / (100 - unknown_weight) * 100, 1) if unknown_weight < 100 else None
         ranking = "EVIDENCE_REQUIRED"
         if full:
-            ranking = "PRIORITY" if observed >= 80 else "CANDIDATE" if observed >= 70 else "OBSERVE" if observed >= 60 else "EXCLUDED"
+            ranking = "PRIORITY" if observed >= max(80, threshold) else "CANDIDATE" if observed >= threshold else "OBSERVE"
         result = {"total": round(observed, 1) if full else None, "provisional_estimate": estimate,
                   "range": [round(observed, 1), round(observed + unknown_weight, 1)],
                   "complete": full, "classification": ranking, "dimensions": dims, "scored_at": utcnow()}

@@ -13,7 +13,7 @@ from unittest.mock import patch
 from repo_scout.common import digest, now
 from repo_scout.database import ConflictError, Store
 from repo_scout.implementation import create_worktree, git, head, run_command, snapshot
-from repo_scout.validation import accept_validation
+from repo_scout.validation import _apply_assessment as accept_validation, import_cc_report, make_cc_packet
 
 
 class DatabaseEdges(unittest.TestCase):
@@ -200,6 +200,31 @@ class WorktreeEvidenceEdges(unittest.TestCase):
         self.assertEqual(run["status"], "PASS")
         with self.assertRaises(ValueError):
             accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+
+    def test_blind_is_independent_and_comparison_bound_to_saved_report(self):
+        args = self.store, self.root, 'F-EDGE'
+        self.store.put('finding', 'F-EDGE', {**self.finding, 'file_path':'module.py', 'line_start':2,'line_end':2,
+                       'proposed_fix':'FIX-CANARY','actual_behavior':'CLAIM-CANARY','assessments':['ASSESSMENT-CANARY']})
+        run = self.run_fixture("raise AssertionError('increment mismatch')")
+        with self.assertRaises(ValueError):
+            make_cc_packet(*args, comparison=True)
+        packet = make_cc_packet(*args)
+        prompt = Path(packet['prompt_path']).read_text('utf-8')
+        for text in (self.finding['title'], 'FIX-CANARY', 'CLAIM-CANARY','ASSESSMENT-CANARY'):
+            self.assertNotIn(text, prompt)
+        report = dict(context_hash=packet['context_hash'], source_sha=self.sha, validator_model='fixture', validator_cli_version='fixture',
+                      result='SUPPORTED',source_facts=['module.py:2'],reproduced=[], hypotheses=[],missing_evidence=[])
+        first = import_cc_report(*args, report, attested_cc=True)
+        packet = make_cc_packet(*args, comparison=True)
+        comparison = dict(context_hash=packet['context_hash'], blind_report_hash=first['blind_report_hash'], validator_model='fixture',
+                          validator_cli_version='fixture', evidence_comparison='different observations', disagreements=['guard omitted'],missing_evidence=[],assessment=self.report(run))
+        second = import_cc_report(*args, dict(report, result='UNVERIFIED'), attested_cc=True)
+        with self.assertRaises(ValueError):
+            import_cc_report(*args, comparison, comparison=True, attested_cc=True)
+        comparison.update(context_hash=make_cc_packet(*args, comparison=True)['context_hash'], blind_report_hash=second['blind_report_hash'])
+        result = import_cc_report(*args, comparison, comparison=True, attested_cc=True)
+        self.assertEqual(result['status'], 'UNVERIFIED')
+        self.assertEqual(self.store.require('cc_comparison','F-EDGE')['report']['disagreements'], ['guard omitted'])
 
     def test_incomplete_duplicate_search_prevents_confirmation(self):
         run = self.run_fixture("from module import increment; assert increment(0) == 1, 'increment mismatch'")

@@ -22,6 +22,8 @@ def minimal_env(home: Path | None = None) -> dict[str, str]:
               "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
     if home:
         result["HOME"] = str(home)
+    if os.name == 'nt' and 'SystemRoot' in os.environ:
+        result['SystemRoot'] = os.environ['SystemRoot']
     return result
 
 

@@ -45,11 +45,12 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("findings")
     single = commands.add_parser("finding")
     single.add_argument("finding_id")
-    for name in ("preflight", "refresh-revision", "cc-packet"):
+    for name in ("preflight", "refresh-revision", "cc-packet", "cc-compare-packet"):
         cp = commands.add_parser(name)
         cp.add_argument("finding_id")
     validate = commands.add_parser("validate", help="导入独立 CC 报告，或显式调用已配置 Claude Code")
     validate.add_argument("finding_id")
+    validate.add_argument('--comparison', action='store_true')
     choice = validate.add_mutually_exclusive_group()
     choice.add_argument("--report", type=Path)
     choice.add_argument("--cc", action="store_true", help="实际调用 Claude Code，产生模型费用")
@@ -190,7 +191,7 @@ def _status(store: Store, username: str) -> dict:
 async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: dict) -> Any:
     from . import workflow
     from .implementation import clone_repository, commit_changes, head, run_command, snapshot
-    from .validation import accept_validation, make_cc_packet, preflight, run_cc_validation
+    from .validation import import_cc_report, make_cc_packet, preflight, run_cc_validation
     command = args.command
     username = config["username"]
     output = root / "reports" / "discovery"
@@ -279,14 +280,14 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
                 packet = make_cc_packet(store, root, fid)
                 results.append({k: v for k, v in packet.items() if k != "manifest"})
         return results
-    if command == "cc-packet":
-        return make_cc_packet(store, root, args.finding_id)
+    if command in {'cc-packet','cc-compare-packet'}:
+        return make_cc_packet(store, root, args.finding_id, comparison=command == 'cc-compare-packet')
     if command == "validate":
         if args.cc:
-            return run_cc_validation(store, root, args.finding_id, model=args.model, max_budget_usd=args.budget)
+            return run_cc_validation(store, root, args.finding_id, model=args.model, max_budget_usd=args.budget, comparison=args.comparison)
         if args.report:
-            return accept_validation(store, root, args.finding_id, json.loads(args.report.read_text()), attested_cc=args.attest_cc)
-        return make_cc_packet(store, root, args.finding_id)
+            return import_cc_report(store, root, args.finding_id, json.loads(args.report.read_text('utf-8')), attested_cc=args.attest_cc, comparison=args.comparison)
+        return make_cc_packet(store, root, args.finding_id, comparison=args.comparison)
     if command == "approve":
         return workflow.approve_finding(store, args.finding_id, actor=args.actor, plan=args.plan, scope=args.scope)
     if command == "implement":

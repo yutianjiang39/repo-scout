@@ -334,6 +334,9 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_definitive_rejection_needs_fresh_approval_before_retry(self):
         draft = await self.approved_issue()
+        self.fixture.approve(approve_submission,self.store, 'F-LOOP', reviewed_digest=draft['digest'],
+                             actor=USER, reason='Repeated confirmation of same draft')
+        self.assertEqual(self.store.connection.execute("SELECT count(*) FROM approvals WHERE kind='submission' AND consumed_at IS NULL").fetchone()[0],1)
         self.client.reject_post_status = 422
         with self.assertRaises(GitHubError):
             await submit(self.store, self.client, self.root, self.config, "F-LOOP")

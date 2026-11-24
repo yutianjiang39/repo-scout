@@ -159,6 +159,11 @@ class Store:
                   "expires_at": (datetime.now(timezone.utc)+timedelta(hours=hours)).isoformat(),
                   "consumed_at": None, "reason": reason}
         with self.atomic():
+            existing = self.connection.execute('''SELECT * FROM approvals WHERE kind=? AND entity_id=? AND digest=?
+                AND consumed_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 1''',
+                (kind, key, payload_digest, now())).fetchone()
+            if existing:
+                return dict(existing)
             self.connection.execute("INSERT INTO approvals VALUES(:id,:kind,:entity_id,:digest,:actor,:created_at,:expires_at,:consumed_at,:reason)", record)
             self.put("approval", record["id"], record, reason=reason, actor=actor)
         return record
@@ -172,8 +177,13 @@ class Store:
             result = dict(row)
             if consume:
                 result["consumed_at"] = now()
-                self.connection.execute("UPDATE approvals SET consumed_at=? WHERE id=?", (result["consumed_at"], result["id"]))
-                self.put("approval", result["id"], result, reason="approval consumed by exact authorized action", actor="workflow")
+                # Older databases can contain duplicate confirmations. None may
+                # survive an attempted send as authorization for another try.
+                for sibling in self.connection.execute('''SELECT * FROM approvals WHERE kind=? AND entity_id=?
+                        AND digest=? AND consumed_at IS NULL''', (kind,key,payload_digest)).fetchall():
+                    self.connection.execute('UPDATE approvals SET consumed_at=? WHERE id=?',(result['consumed_at'],sibling['id']))
+                    self.put('approval',sibling['id'],{**dict(sibling),'consumed_at':result['consumed_at']},
+                             reason='approval consumed by exact authorized action',actor='workflow')
             return result
 
     def operation(self, key: str) -> dict | None:

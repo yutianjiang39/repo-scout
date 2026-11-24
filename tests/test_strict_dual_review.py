@@ -70,7 +70,8 @@ class StrictGateTests(unittest.TestCase):
         with patch.object(gate, 'artifact', return_value=artifact):
             gate.start(self.store,self.subject,'submission')
             self.store.put('cc_session','registered',{'task':'validation'})
-            for session in ('impl','gpt:impl','gpt:registered'):
+            self.store.put('cc_session','gpt:prefixed',{'task':'validation'})
+            for session in ('impl','gpt:impl','gpt:registered','prefixed'):
                 report = self.fixture.report(self.subject,'submission','reviewer_a','independent')
                 report['decision']['session_id'] = session
                 with self.assertRaisesRegex(ValueError,'fresh independent'):

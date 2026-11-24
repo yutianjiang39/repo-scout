@@ -144,16 +144,16 @@ def _validate(store, subject, kind, role, phase, envelope, *, _current=None):
     if envelope.get('binding') != p['binding'] or set(envelope) != {'binding','decision'}:
         raise ValueError('BLOCKED: receipt binding mismatch')
     d = Decision.model_validate(envelope['decision'])
-    sessions = {d.session_id}
     prefix = p['binding']['provider'] + ':'
-    if d.session_id.startswith(prefix):
-        sessions.add(d.session_id[len(prefix):])
+    if any(d.session_id.startswith(v + ':') for v in REVIEWERS.values() if v + ':' != prefix):
+        raise ValueError('BLOCKED: session prefix belongs to the other reviewer')
+    bare = d.session_id.removeprefix(prefix)
+    sessions = {bare, prefix + bare}
     review_context = p['context'].get('diff', {}) if kind == 'submission' else p['context']
     if review_context.get('implementer_session') in sessions or any(store.get('cc_session', s) for s in sessions):
         raise ValueError('BLOCKED: need a fresh independent reviewer session')
     # Older reports retain their original spelling. Compare both legitimate
     # spellings without rewriting that history or conflating provider IDs.
-    bare = d.session_id.removeprefix(prefix)
     if store.connection.execute(
         '''SELECT 1 FROM review_receipts WHERE session IN (?, ?) AND
            NOT (round_id=? AND role=? AND phase=?) LIMIT 1''',

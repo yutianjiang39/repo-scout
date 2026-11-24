@@ -21,3 +21,6 @@ sudo .venv/bin/python -m repo_scout.pilot --home /var/lib/repo-scout-pilot revie
 ```
 
 想先在本地体验，可以跑[离线演练](docs/demo.md)。要接着上次的进度做，看[交接记录](docs/handoff.md)；需要完整命令或恢复数据时，再查[运维手册](docs/operations.md)。
+# 仓库书架
+
+用 `repo-scout shelf list` 浏览仓库，`repo-scout shelf show owner/repo` 查看该库的扫描、草稿、Issue、PR 和跟进历史。见[书架操作说明](docs/shelf.md)。

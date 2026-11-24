@@ -26,6 +26,8 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--home", type=Path, default=Path(".repo-scout"), help="配置、数据库、Worktree 与报告目录")
     p.add_argument("--config", type=Path, help="自定义 YAML；密钥只从环境变量读取")
     commands = p.add_subparsers(dest="command", required=True)
+    from . import shelf
+    shelf.add_parser(commands)
     init = commands.add_parser("init", help="初始化本地管理目录")
     init.add_argument("--username", help="省略时保留已有账号；全新配置默认为 yutianjiang39")
     commands.add_parser("doctor", help="检查依赖和配置；不显示凭证，也不联网")
@@ -479,7 +481,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser().parse_args(argv)
     root = args.home.expanduser().resolve()
     try:
-        if args.command == "demo":
+        if args.command == 'shelf':
+            from . import shelf
+            result = shelf.run(args,root)
+        elif args.command == "demo":
             from .demo import run_demo
             result = asyncio.run(run_demo((args.output or root / "demo").resolve()))
         else:

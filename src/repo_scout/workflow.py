@@ -274,6 +274,7 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
         raise ValueError("Issue drafting requires the first human approval")
     draft = Draft(**kwargs).model_dump(exclude={'prepared_at'})
     draft_hash = digest(draft)
+    output = root / 'reports' / 'submissions' / finding_id
     with store.atomic():
         previous = store.get('draft',finding_id)
         if previous:
@@ -292,7 +293,13 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
         validate_transition(finding["status"], "READY_FOR_REVIEW")
         updated = store.put("finding", finding_id, {**finding, "status": "READY_FOR_REVIEW", "draft_digest": draft_hash},
                             reason="tests and diff ready for final user approval", actor="draft", expected_version=finding["_version"])
-    output = root / "reports" / "submissions" / finding_id
+        version = output / 'versions' / draft_hash
+        if submission_type != 'ISSUE':
+            atomic_write(version / 'changes.diff', state['diff']+'\n')
+        # Write the manifest last; any archive failure rolls back this approval transition.
+        write_json(version / 'draft.json', {'draft': draft, 'digest': draft_hash})
+        store.put('draft_version',digest([finding_id,draft_hash]),{'finding_id':finding_id,'digest':draft_hash},
+                  reason='content-addressed draft archive prepared',actor='draft')
     write_json(output / "draft.json", {"draft": draft, "digest": draft_hash})
     atomic_write(output / "draft.md", f"# {title}\n\nUpstream: {finding['repository']}\n\nType: {submission_type}\n\n{draft['body']}\n\n"
                  f"## Review information\n\nRisk: {risk}\n\nFiles: {', '.join(draft['changed_files']) or 'None'}\n\n"

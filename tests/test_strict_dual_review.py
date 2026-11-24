@@ -1,4 +1,7 @@
 import json
+import asyncio
+import os
+import httpx
 import sqlite3
 from contextlib import closing
 import tempfile
@@ -50,6 +53,7 @@ class StrictGateTests(unittest.TestCase):
             self.independent()
             self.send('reviewer_a','final')
             self.send('reviewer_b','final',verdict,issues)
+            self.send('reviewer_c','final')
             with self.assertRaises(ValueError): gate.require(*self.args)
 
     def test_implementation_session_is_not_independent(self):
@@ -85,10 +89,47 @@ class StrictGateTests(unittest.TestCase):
 
     def test_new_round_invalidates_old_pass_and_cannot_mix_finals(self):
         self.independent(); self.send('reviewer_a','final'); old=self.send('reviewer_b','final')
+        self.send('reviewer_c','final')
         self.assertTrue(gate.require(*self.args))
         gate.start(*self.args); self.independent(); self.send('reviewer_a','final')
         with self.assertRaises(ValueError): gate.receive(*self.args,old)
         with self.assertRaises(ValueError): gate.require(*self.args)
+
+    def test_every_network_pair_can_pass_but_one_reviewer_never_can(self):
+        for missing in gate.ROLES:
+            gate.start(*self.args)
+            pair = [r for r in gate.ROLES if r != missing]
+            for role in pair: self.send(role,'independent')
+            with self.assertRaises(ValueError): gate.packet(*self.args,pair[0],'final')
+            gate.network_failure(*self.args,missing,'timeout')
+            with self.assertRaises(ValueError): gate.network_failure(*self.args,pair[0],'dns')
+            self.send(pair[0],'final')
+            with self.assertRaises(ValueError): gate.require(*self.args)
+            self.send(pair[1],'final')
+            self.assertEqual(gate.status(*self.args)['status'],'PASSED')
+            with self.assertRaises(ValueError): gate.packet(*self.args,missing,'final')
+
+    def test_network_loss_during_final_preserves_reports_and_cannot_hide_rejection(self):
+        self.independent()
+        self.send('reviewer_a','final'); self.send('reviewer_b','final')
+        with self.assertRaises(ValueError): gate.require(*self.args)
+        gate.network_failure(*self.args,'reviewer_c','connection-reset')
+        self.assertTrue(gate.require(*self.args))
+        gate.start(*self.args)
+        self.send('reviewer_c','independent','REVISE')
+        with self.assertRaises(ValueError): gate.network_failure(*self.args,'reviewer_c','timeout')
+
+    def test_gemini_collector_uses_chat_completions_and_records_real_response_id(self):
+        def respond(request):
+            self.assertEqual(request.url.path,'/v1/chat/completions')
+            self.assertEqual(json.loads(request.content)['model'],'gemini-4-neon')
+            self.assertEqual(request.headers['Authorization'],'Bearer test-only')
+            decision = {'verdict':'PASS','disagreements':[],'rationale':'checked','evidence':[{'kind':'SOURCE_CONFIRMED','reference':'draft content'}]}
+            return httpx.Response(200,json={'id':'msg123','model':'gemini-4-neon','choices':[{'finish_reason':'stop','message':{'content':json.dumps(decision)}}]})
+        with patch.dict(os.environ,REPO_SCOUT_GEMINI_API_KEY='test-only'):
+            asyncio.run(gate.collect_gemini(*self.args,'independent',transport=httpx.MockTransport(respond)))
+        report = gate.status(*self.args)['reports']['independent']['reviewer_c']
+        self.assertEqual(report['decision']['session_id'],'gemini-4-neon:msg123')
 
     def test_provider_prefix_does_not_create_a_new_session(self):
         for first, second in [('raw1','gpt:raw1'),('gpt:raw2','raw2')]:

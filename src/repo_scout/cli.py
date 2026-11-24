@@ -17,6 +17,7 @@ from . import __version__
 from .common import atomic_write, digest, now, redact, slug, write_json
 from .config import load_config, write_default
 from .database import Store
+from .review_gate import NETWORK_ERRORS, ROLES
 
 
 def parser() -> argparse.ArgumentParser:
@@ -63,13 +64,17 @@ def parser() -> argparse.ArgumentParser:
     commands.add_parser("run-validation", help="为未验证的候选生成最新 preflight 和 CC 任务包")
     approve = commands.add_parser("approve", help="第一道批准：具体实施/Review修订方案")
     approve.add_argument('--confirm-digest', help='Confirm the exact approval_digest returned by preview')
-    for cmd in ('review-start','review-packet','review-import','review-status'):
+    for cmd in ('review-start','review-packet','review-import','review-status','review-network-failure','review-gemini'):
         sub = commands.add_parser(cmd)
         sub.add_argument('subject')
         sub.add_argument('artifact',choices=('finding','diff','submission','profile'))
         if cmd=='review-packet':
-            sub.add_argument('reviewer',choices=('reviewer_a','reviewer_b'))
+            sub.add_argument('reviewer',choices=ROLES)
+        if cmd in ('review-packet','review-gemini'):
             sub.add_argument('phase',choices=('independent','final'))
+        if cmd=='review-network-failure':
+            sub.add_argument('reviewer',choices=ROLES)
+            sub.add_argument('error',choices=NETWORK_ERRORS)
         if cmd=='review-import':
             sub.add_argument('file',type=Path)
     approve.add_argument("finding_id")
@@ -208,9 +213,13 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
     from .implementation import clone_repository, commit_changes, head, run_command, snapshot
     from .validation import import_cc_report, make_cc_packet, preflight, run_cc_validation
     command = args.command
-    if command in ('review-start','review-packet','review-import','review-status'):
+    if command in ('review-start','review-packet','review-import','review-status','review-network-failure','review-gemini'):
         from . import review_gate as gate
         subject,kind = args.subject,args.artifact
+        if command=='review-network-failure':
+            return gate.network_failure(store,subject,kind,args.reviewer,args.error)
+        if command=='review-gemini':
+            return await gate.collect_gemini(store,subject,kind,args.phase)
         if command=='review-start':
             return {'round_id':gate.start(store,subject,kind)}
         if command=='review-packet':

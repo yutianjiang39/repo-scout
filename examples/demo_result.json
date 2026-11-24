@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "provenance": "demo",
+  "demo_notice": "DEMO — 离线合成示例，不是真实上游贡献。代码与测试在本机实际执行；CC 结论、人工审批、GitHub Review 与合并均为模拟。",
+  "baseline_fail": true,
+  "regression_pass": true,
+  "revision_pass": true,
+  "actual_test_runs": 3,
+  "upstream_sha": "42fa7f2be36e486b6e59d749657ce651c74f47ac",
+  "first_head": "fa6e370d1eb241838bde269060fbad43127769ee",
+  "revised_head": "90971260e7e7058ed0bd1c367cde89b05783982c",
+  "review_loop": [
+    {
+      "event": "simulated_review_requested",
+      "status": "UNDER_REVIEW",
+      "head_sha": "fa6e370d1eb241838bde269060fbad43127769ee",
+      "provenance": "demo",
+      "official_contributions": 0
+    },
+    {
+      "event": "simulated_changes_requested",
+      "status": "CHANGES_REQUESTED",
+      "head_sha": "fa6e370d1eb241838bde269060fbad43127769ee",
+      "provenance": "demo",
+      "official_contributions": 0
+    },
+    {
+      "event": "simulated_new_head_awaits_re_review",
+      "status": "CHANGES_REQUESTED",
+      "head_sha": "90971260e7e7058ed0bd1c367cde89b05783982c",
+      "provenance": "demo",
+      "official_contributions": 0
+    },
+    {
+      "event": "simulated_maintainer_approved",
+      "status": "APPROVED",
+      "head_sha": "90971260e7e7058ed0bd1c367cde89b05783982c",
+      "provenance": "demo",
+      "official_contributions": 0
+    },
+    {
+      "event": "simulated_upstream_merged",
+      "status": "MERGED",
+      "head_sha": "90971260e7e7058ed0bd1c367cde89b05783982c",
+      "provenance": "demo",
+      "official_contributions": 0
+    }
+  ],
+  "official_contributions": 0,
+  "excluded_demo": true,
+  "records_all_demo": true,
+  "records_count": 20,
+  "event_count": 54,
+  "network_requests": 0,
+  "model_requests": 0,
+  "public_writes": 0,
+  "cc_validation_simulated": true,
+  "approvals_simulated": true,
+  "maintainer_review_simulated": true,
+  "capture_note": "Actual offline demo run. File paths omitted from this portable example; run repo-scout demo to generate local logs and database."
+}

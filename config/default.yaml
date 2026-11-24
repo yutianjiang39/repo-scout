@@ -1,0 +1,45 @@
+username: yutianjiang39
+profile_repository: yutianjiang39/yutianjiang39
+github:
+  read_token_env: GITHUB_READ_TOKEN
+  write_token_env: GITHUB_WRITE_TOKEN
+search:
+  limit: 25
+  categories:
+  - name: Hyperliquid Ecosystem
+    query: hyperliquid archived:false fork:false
+    weight: 40
+  - name: Independent Trading Infrastructure
+    query: trading websocket language:Python archived:false fork:false
+    weight: 28
+  - name: Quantitative & Data Analytics
+    query: backtesting language:Python archived:false fork:false
+    weight: 20
+  - name: Rust / Python Engineering Tools
+    query: async language:Rust archived:false fork:false
+    weight: 12
+screening:
+  max_inactive_days: 180
+  allow_unknown_license: false
+scoring:
+  threshold: 70
+providers: {}
+roles: {}
+audit:
+  max_findings: 5
+  input_token_budget: 100000
+  output_token_budget: 40000
+  concurrency: 2
+  prompt_version: '1'
+  cost_budget_usd: null
+  max_chunks: 80
+  context_tokens: 1500
+validation:
+  preflight_max_age_hours: 24
+execution:
+  runner: docker
+  image: python:3.11-slim
+  timeout_seconds: 300
+tracking:
+  interval_hours: 24
+  trusted_maintainers: {}

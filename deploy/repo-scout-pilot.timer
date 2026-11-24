@@ -1,0 +1,11 @@
+[Unit]
+Description=Poll five public repositories every six hours
+
+[Timer]
+OnBootSec=5min
+OnCalendar=*-*-* 00,06,12,18:00:00 UTC
+Persistent=true
+Unit=repo-scout-pilot.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,32 @@
+# 所有模型名称由使用者填写真实可用值。空 roles 不会启动模型调用。
+# 此文件可作为 --config 的覆盖配置；更多默认值见 default.yaml。
+providers:
+  chosen_openai:
+    type: openai
+    api_key_env: OPENAI_API_KEY
+    timeout_seconds: 90
+    retries: 2
+    pricing: {}
+  chosen_anthropic:
+    type: anthropic
+    api_key_env: ANTHROPIC_API_KEY
+    timeout_seconds: 90
+    retries: 2
+    pricing: {}
+  chosen_gemini:
+    type: gemini
+    api_key_env: GEMINI_API_KEY
+    timeout_seconds: 90
+    retries: 2
+    pricing: {}
+roles: {}
+# 启用时，在 roles 中创建 primary_auditor，并配置 provider、实际 model、task: audit。
+# adversarial_reviewer 使用 task: adversarial；final_diff_reviewer 使用 task: final_diff。
+audit:
+  input_token_budget: 100000
+  output_token_budget: 40000
+  cost_budget_usd: null  # 设置金额前必须填写每个真实模型的当前价格，否则拒绝请求。
+  concurrency: 2
+  prompt_version: repo-scout-audit-v1
+  max_chunks: 80
+  context_tokens: 1500

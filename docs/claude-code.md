@@ -1,5 +1,7 @@
 # Claude Code 集成
 
+CC 盲审与比较是证据收集，不等于两位独立模型最终验收。实施和提交必须走[签名双审协议](strict-dual-review.md)。
+
 本程序把候选审查与独立工程验证分开。CC 验证只能针对当前上游 SHA 的代码和实际运行证据作判断；模型返回的 PASS 不会创建测试记录。
 
 自动入口在一个空的临时目录调用已安装的 Claude Code CLI，使用 bare mode、空工具列表和空 MCP 配置，只通过 stdin 输入筛选后的上下文，独立解析 `structured_output` 并执行 Pydantic 校验。它不会读取旧会话，也不会执行仓库中的 hooks、配置或脚本。

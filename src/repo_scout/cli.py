@@ -51,6 +51,9 @@ def parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="导入独立 CC 报告，或显式调用已配置 Claude Code")
     validate.add_argument("finding_id")
     validate.add_argument('--comparison', action='store_true')
+    seed = commands.add_parser('record-assessment',help='保存候选证据说明，不授予双验收或实施资格')
+    seed.add_argument('finding_id')
+    seed.add_argument('file',type=Path)
     choice = validate.add_mutually_exclusive_group()
     choice.add_argument("--report", type=Path)
     choice.add_argument("--cc", action="store_true", help="实际调用 Claude Code，产生模型费用")
@@ -59,6 +62,16 @@ def parser() -> argparse.ArgumentParser:
     validate.add_argument("--budget", type=float, default=2.0)
     commands.add_parser("run-validation", help="为未验证的候选生成最新 preflight 和 CC 任务包")
     approve = commands.add_parser("approve", help="第一道批准：具体实施/Review修订方案")
+    approve.add_argument('--receipt',type=Path)
+    for cmd in ('review-start','review-packet','review-import','review-status'):
+        sub = commands.add_parser(cmd)
+        sub.add_argument('subject')
+        sub.add_argument('artifact',choices=('finding','diff','submission','profile'))
+        if cmd=='review-packet':
+            sub.add_argument('reviewer',choices=('reviewer_a','reviewer_b'))
+            sub.add_argument('phase',choices=('independent','final'))
+        if cmd=='review-import':
+            sub.add_argument('file',type=Path)
     approve.add_argument("finding_id")
     approve.add_argument("--actor", required=True)
     approve.add_argument("--plan", required=True)
@@ -101,6 +114,7 @@ def parser() -> argparse.ArgumentParser:
         if name != "prepare-issue":
             cp.add_argument("--fork", required=True)
     final = commands.add_parser("approve-submit", help="第二道批准：绑定完整草稿 Digest")
+    final.add_argument('--receipt',type=Path)
     final.add_argument("finding_id")
     final.add_argument("--digest", required=True)
     final.add_argument("--actor", required=True)
@@ -130,6 +144,7 @@ def parser() -> argparse.ArgumentParser:
     preview.add_argument("--readme", type=Path)
     commands.add_parser("profile-draft", help="验证 Profile 仓库存在，读取实际 README 后只修改贡献区域")
     profile_approve = commands.add_parser("approve-profile")
+    profile_approve.add_argument('--receipt',type=Path)
     profile_approve.add_argument("--digest", required=True)
     profile_approve.add_argument("--actor", required=True)
     profile_approve.add_argument("--reason", required=True)
@@ -193,6 +208,17 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
     from .implementation import clone_repository, commit_changes, head, run_command, snapshot
     from .validation import import_cc_report, make_cc_packet, preflight, run_cc_validation
     command = args.command
+    if command in ('review-start','review-packet','review-import','review-status'):
+        from . import review_gate as gate
+        subject,kind = args.subject,args.artifact
+        if command=='review-start':
+            return {'round_id':gate.start(store,subject,kind)}
+        if command=='review-packet':
+            return gate.packet(store,subject,kind,args.reviewer,args.phase)
+        if command=='review-import':
+            return gate.receive(store,subject,kind,json.loads(args.file.read_text('utf-8')))
+        return gate.status(store,subject,kind)
+    receipt = json.loads(args.receipt.read_text('utf-8')) if getattr(args,'receipt',None) else None
     username = config["username"]
     output = root / "reports" / "discovery"
     if command == "doctor":
@@ -288,8 +314,15 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
         if args.report:
             return import_cc_report(store, root, args.finding_id, json.loads(args.report.read_text('utf-8')), attested_cc=args.attest_cc, comparison=args.comparison)
         return make_cc_packet(store, root, args.finding_id, comparison=args.comparison)
+    if command=='record-assessment':
+        from .validation import _apply_assessment
+        from .bundle import secret_reason
+        text = args.file.read_text('utf-8')
+        if secret_reason(text) or redact(text)!=text:
+            raise ValueError('Sensitive assessment withheld')
+        return _apply_assessment(store,root,args.finding_id,json.loads(text),attested_cc=False,provenance='candidate-evidence')
     if command == "approve":
-        return workflow.approve_finding(store, args.finding_id, actor=args.actor, plan=args.plan, scope=args.scope)
+        return workflow.approve_finding(store, args.finding_id, actor=args.actor, plan=args.plan, scope=args.scope,receipt=receipt)
     if command == "implement":
         finding = store.require("finding", args.finding_id)
         if finding.get("implementation_payload", {}).get("revision") and finding["status"] == "HUMAN_APPROVED":
@@ -315,6 +348,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
         return run
     if command == "commit":
         finding = store.require("finding", args.finding_id)
+        workflow._active_plan(store,finding)
         if finding["status"] not in {"IMPLEMENTING", "TESTING"}:
             raise ValueError("Commit only from an approved active implementation")
         return {"head_sha": commit_changes(Path(finding["workspace"]), message=args.message, name=args.name, email=args.email)}
@@ -332,7 +366,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
                                       submission_type={"prepare-pr": "PR", "prepare-issue": "ISSUE", "prepare-update": "PR_UPDATE"}[command],
                                       title=args.title, body=args.body_file.read_text(), risk=args.risk, fork=getattr(args, "fork", ""))
     if command == "approve-submit":
-        return workflow.approve_submission(store, args.finding_id, reviewed_digest=args.digest, actor=args.actor, reason=args.reason)
+        return workflow.approve_submission(store, args.finding_id, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,receipt=receipt)
     if command in {"submit", "reconcile-submit"}:
         async with _client(store, config) as client:
             if command == "submit":
@@ -412,7 +446,7 @@ async def dispatch(args: argparse.Namespace, store: Store, root: Path, config: d
         async with _client(store, config) as client:
             return await workflow.prepare_profile(store, client, root, config)
     if command == "approve-profile":
-        return workflow.approve_profile(store, config, reviewed_digest=args.digest, actor=args.actor, reason=args.reason)
+        return workflow.approve_profile(store, config, reviewed_digest=args.digest, actor=args.actor, reason=args.reason,receipt=receipt)
     if command == "profile-publish":
         async with _client(store, config) as client:
             return await workflow.publish_profile(store, client, config)

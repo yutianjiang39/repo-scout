@@ -193,7 +193,7 @@ class WorktreeEvidenceEdges(unittest.TestCase):
         self.assertNotEqual(run["return_code"], 0)
         self.assertTrue(run["source_unchanged"])
         saved = accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
-        self.assertEqual(saved["status"], "CONFIRMED")
+        self.assertEqual(saved["status"], "CC_VALIDATING")  # evidence alone does not pass dual review
 
     def test_passing_command_cannot_be_claimed_as_reproduction(self):
         run = self.run_fixture("print('AssertionError: increment mismatch')")

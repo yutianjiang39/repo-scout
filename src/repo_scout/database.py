@@ -60,8 +60,18 @@ class Store:
                 payload TEXT NOT NULL, result TEXT, created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL);
         """)
-        if self.connection.execute("SELECT version FROM schema_version").fetchone()[0] != 1:
-            raise ValueError("Unsupported database version; migrate before opening")
+        with self.atomic():
+            version = self.connection.execute('SELECT version FROM schema_version').fetchone()[0]
+            if version not in (1, 2):
+                raise ValueError('Unsupported database version')
+            if version == 1:
+                self.connection.execute('CREATE TABLE review_rounds(seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, subject TEXT NOT NULL, kind TEXT NOT NULL, artifact TEXT NOT NULL, policy TEXT NOT NULL)')
+                self.connection.execute('CREATE INDEX current_round ON review_rounds(subject,kind,seq DESC)')
+                self.connection.execute('CREATE TABLE review_receipts(round_id TEXT NOT NULL REFERENCES review_rounds(id), role TEXT NOT NULL, phase TEXT NOT NULL, session TEXT NOT NULL UNIQUE, envelope TEXT NOT NULL, PRIMARY KEY(round_id,role,phase))')
+                for table in ('review_rounds', 'review_receipts'):
+                    for action in ('UPDATE','DELETE'):
+                        self.connection.execute(f"CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'immutable review history'); END")
+                self.connection.execute('UPDATE schema_version SET version=2')
 
     def close(self) -> None:
         self.connection.close()

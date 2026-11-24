@@ -237,7 +237,7 @@ def run_cc_validation(store, root: Path, finding_id: str, *, model: str | None =
 
 def _apply_assessment(store, root: Path, finding_id: str, payload: dict, *, attested_cc: bool,
                       provenance: str = "operator-import") -> dict:
-    if not attested_cc:
+    if not attested_cc and provenance!='candidate-evidence':
         raise ValueError("Imported reports require --attest-cc to record that an actual independent CC session produced them")
     report = ValidationReport.model_validate(payload)
     finding = store.require("finding", finding_id)
@@ -257,9 +257,9 @@ def _apply_assessment(store, root: Path, finding_id: str, payload: dict, *, atte
             raise ValueError("Failure signature is missing or baseline log integrity failed")
     if report.result == "CONFIRMED" and report.recommended_action == "PR" and finding["category"] not in {"documentation", "docs"} and not report.reproducible:
         raise ValueError("Executable code PRs require reproduction; keep investigating or propose an evidence-backed issue")
-    record = {**report.model_dump(), "report_provenance": provenance, "received_at": now(), "attested_cc": True}
-    updated = {**finding, "validation": record, "status": report.result,
-               "evidence_status": "CONFIRMED" if report.result == "CONFIRMED" else finding["evidence_status"]}
+    record = {**report.model_dump(), "report_provenance": provenance, "received_at": now(), "attested_cc": attested_cc}
+    updated = {**finding, "validation": record, "status": 'CC_VALIDATING' if report.result=='CONFIRMED' else report.result,
+               "evidence_status": 'INFERRED'}
     with store.atomic():
         store.put("validation", finding_id+":"+digest(record)[:16], record, reason="independent validation result", actor="claude-code")
         saved = store.put("finding", finding_id, updated, reason="CC evidence evaluated", actor="validation-gate", expected_version=finding["_version"])

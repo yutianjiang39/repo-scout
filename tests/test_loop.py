@@ -166,6 +166,8 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         (self.original / "README.md").write_text("# Arithmetic\n\n`double(value)` returns value * 2.\n")
         self.sha = commit_changes(self.original, message="fixture: initial source", name="Fixture", email="fixture@example.invalid")
         self.store = Store(self.root / "contribution.db")
+        from repo_scout.demo_review import FixtureCollector
+        self.fixture = FixtureCollector(self.store)
         self.client = MockGitHub(self.sha)
         self.config = {"username": USER, "profile_repository": PROFILE,
                        "validation": {"preflight_max_age_hours": 24},
@@ -197,12 +199,14 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
                   "already_fixed_assessment": "Latest verified fixture SHA still uses addition", "recommended_action": action,
                   "impact": "Incorrect arithmetic", "regression_risk": "Small; input boundary tests required",
                   "baseline_run_id": baseline["run_id"], "failure_signature": "DOUBLE_REGRESSION", "reproducible": True}
-        return accept_validation(self.store, self.root, "F-LOOP", report, attested_cc=True,
+        accept_validation(self.store, self.root, "F-LOOP", report, attested_cc=True,
                                  provenance="test-fixture-independent-validator")
+        self.fixture.review('F-LOOP','finding')
+        return self.store.require('finding','F-LOOP')
 
     async def prepared_issue(self):
         await self.validated()
-        approve_finding(self.store, "F-LOOP", actor=USER, plan="Discuss the documented arithmetic behavior with upstream", scope=[])
+        self.fixture.approve(approve_finding,self.store, "F-LOOP", actor=USER, plan="Discuss the documented arithmetic behavior with upstream", scope=[])
         return prepare_draft(self.store, self.root, "F-LOOP", submission_type="ISSUE",
                              title="double(2) returns 3 instead of documented 4",
                              body="Reproduction: call double(2) at the verified commit. Expected 4; observed 3. "
@@ -211,7 +215,8 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
 
     async def approved_issue(self):
         draft = await self.prepared_issue()
-        approve_submission(self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER,
+        self.fixture.review('F-LOOP','submission')
+        self.fixture.approve(approve_submission,self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER,
                            reason="Reviewed the precise upstream issue and reproduction")
         return draft
 
@@ -230,7 +235,7 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
 
     async def submitted_pr(self):
         await self.validated("PR")
-        approve_finding(self.store, "F-LOOP", actor=USER, plan="Replace addition with multiplication in the one affected function", scope=["maths.py"])
+        self.fixture.approve(approve_finding,self.store, "F-LOOP", actor=USER, plan="Replace addition with multiplication in the one affected function", scope=["maths.py"])
         implementation = begin_implementation(self.store, self.root, "F-LOOP")
         workspace = Path(implementation["workspace"])
         (workspace / "maths.py").write_text("def double(value):\n    return value * 2\n")
@@ -241,11 +246,13 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run["status"], "PASS")
         record_diff_review(self.store, "F-LOOP", actor="independent-test-reviewer",
                            assessment="The one-line patch fixes the reproduced contract violation without unrelated changes", approved=True)
+        self.fixture.review('F-LOOP','diff')
         draft = prepare_draft(self.store, self.root, "F-LOOP", submission_type="PR", fork=FORK,
                               title="Fix documented double arithmetic contract",
                               body="Fixes the reproduced wrong result with a focused arithmetic change. "
                                    "The same baseline command now passes against the committed patch.", risk="Small arithmetic behavior correction")
-        approve_submission(self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER, reason="Reviewed diff and recorded test results")
+        self.fixture.review('F-LOOP','submission')
+        self.fixture.approve(approve_submission,self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER, reason="Reviewed diff and recorded test results")
         self.client.expected_approved_sha = draft["draft"]["head_sha"]
         return await submit(self.store, self.client, self.root, self.config, "F-LOOP", push_function=self.client.push)
 
@@ -262,7 +269,8 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await publish_profile(self.store, self.client, self.config)
         self.assertEqual(self.client.puts, [])
-        approve_profile(self.store, self.config, reviewed_digest=profile["digest"], actor=USER,
+        self.fixture.review(PROFILE,'profile')
+        self.fixture.approve(approve_profile,self.store, self.config, reviewed_digest=profile["digest"], actor=USER,
                         reason="Reviewed contributions-only Profile diff")
         first = await publish_profile(self.store, self.client, self.config)
         again = await publish_profile(self.store, self.client, self.config)
@@ -288,6 +296,22 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.client.posts, [])
         self.assertEqual(self.store.list("submission"), [])
 
+    async def test_reopening_review_after_approval_blocks_submit_before_public_writes(self):
+        from repo_scout import review_gate as gate
+        await self.approved_issue()
+        gate.start(self.store,'F-LOOP','submission')
+        with self.assertRaises(ValueError):
+            await submit(self.store,self.client,self.root,self.config,'F-LOOP')
+        self.assertEqual((self.client.posts,self.client.push_count),([],0))
+
+    async def test_log_tamper_invalidates_issue_review(self):
+        await self.approved_issue()
+        baseline = self.store.list('test_run')[0]
+        Path(baseline['log_path']).write_text('different output')
+        with self.assertRaises(ValueError):
+            await submit(self.store,self.client,self.root,self.config,'F-LOOP')
+        self.assertEqual(self.client.posts,[])
+
     async def test_approved_issue_can_be_edited_but_old_digest_is_invalid(self):
         first = await self.approved_issue()
         edited = prepare_draft(self.store, self.root, "F-LOOP", submission_type="ISSUE",
@@ -302,7 +326,8 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await submit(self.store, self.client, self.root, self.config, "F-LOOP")
         self.assertEqual(self.client.posts, [])
-        approve_submission(self.store, "F-LOOP", reviewed_digest=edited["digest"], actor=USER, reason="Reviewed amended issue content")
+        self.fixture.review('F-LOOP','submission')
+        self.fixture.approve(approve_submission,self.store, "F-LOOP", reviewed_digest=edited["digest"], actor=USER, reason="Reviewed amended issue content")
         submitted = await submit(self.store, self.client, self.root, self.config, "F-LOOP")
         self.assertEqual(submitted["title"], edited["draft"]["title"])
         self.assertEqual(len(self.client.posts), 1)
@@ -320,7 +345,7 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(ValueError):
             await submit(self.store, self.client, self.root, self.config, "F-LOOP")
         self.assertEqual(len(self.client.posts), 1)
-        approve_submission(self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER,
+        self.fixture.approve(approve_submission,self.store, "F-LOOP", reviewed_digest=draft["digest"], actor=USER,
                            reason="Server rejection resolved; explicitly approve retry of the same reviewed content")
         result = await submit(self.store, self.client, self.root, self.config, "F-LOOP")
         self.assertEqual(result["number"], 8)
@@ -342,7 +367,7 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
                                 "commit_id": self.client.pushed_sha, "submitted_at": now(),
                                 "html_url": f"https://github.com/{UPSTREAM}/pull/7#pullrequestreview-601"}]
         await sync_submission(self.store, self.client, sub["submission_id"])
-        approve_finding(self.store, "F-LOOP", actor=USER, plan="Address the approved zero-case review", scope=["maths.py"])
+        self.fixture.approve(approve_finding,self.store, "F-LOOP", actor=USER, plan="Address the approved zero-case review", scope=["maths.py"])
         self.client.reviews.append({**self.client.reviews[0], "id": 602, "submitted_at": now(),
                                     "body": "A new request: discuss negative quantities before editing.",
                                     "html_url": f"https://github.com/{UPSTREAM}/pull/7#pullrequestreview-602"})
@@ -358,7 +383,7 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
                                 "commit_id": self.client.pushed_sha, "submitted_at": now(),
                                 "html_url": f"https://github.com/{UPSTREAM}/pull/7#pullrequestreview-601"}]
         await sync_submission(self.store, self.client, sub["submission_id"])
-        approve_finding(self.store, "F-LOOP", actor=USER, plan="Investigate the reported test instability", scope=["maths.py"])
+        self.fixture.approve(approve_finding,self.store, "F-LOOP", actor=USER, plan="Investigate the reported test instability", scope=["maths.py"])
         begin_implementation(self.store, self.root, "F-LOOP")
         finding = mark_testing(self.store, "F-LOOP")
         external_state = self.root / "fixture-state.txt"
@@ -395,7 +420,8 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
     async def test_profile_readme_changed_remotely_blocks_overwrite(self):
         await self.accepted_issue()
         profile = await prepare_profile(self.store, self.client, self.root, self.config)
-        approve_profile(self.store, self.config, reviewed_digest=profile["digest"], actor=USER, reason="Reviewed Profile diff")
+        self.fixture.review(PROFILE,'profile')
+        self.fixture.approve(approve_profile,self.store, self.config, reviewed_digest=profile["digest"], actor=USER, reason="Reviewed Profile diff")
         self.client.readme += "\nNew manual project description.\n"
         self.client.readme_sha = "f" * 40
         with self.assertRaises(ValueError):
@@ -414,7 +440,7 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(sync_ledger(self.store), [])
         with self.assertRaises(ValueError):
             begin_implementation(self.store, self.root, "F-LOOP")
-        approve_finding(self.store, "F-LOOP", actor=USER, plan="Check zero behavior and keep revision within the arithmetic module", scope=["maths.py"])
+        self.fixture.approve(approve_finding,self.store, "F-LOOP", actor=USER, plan="Check zero behavior and keep revision within the arithmetic module", scope=["maths.py"])
         revision = begin_implementation(self.store, self.root, "F-LOOP")
         self.assertTrue(revision["revision"])
         self.assertEqual(head(Path(revision["workspace"])), self.client.pushed_sha)

@@ -1,4 +1,5 @@
 include AGENTS.md config/default.yaml
+include scripts/collect_review.py
 recursive-include docs *.md
 recursive-include deploy *.service *.timer
 recursive-include tests *.py

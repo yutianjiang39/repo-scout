@@ -93,7 +93,7 @@ class Finding(BaseModel):
 class ValidationReport(BaseModel):
     model_config = ConfigDict(extra="forbid")
     finding_id: str
-    validator: Literal["claude-code"] = "claude-code"
+    validator: str = Field(default="claude-code", min_length=1)  # advisory assessment, not reviewer identity
     session_id: str = Field(min_length=1)
     source_sha: str = Field(pattern=r"^[0-9a-f]{40,64}$")
     result: Literal["CONFIRMED", "PROBABLE", "UNVERIFIED", "REJECTED", "ALREADY_FIXED", "DUPLICATE", "DESIGN_DECISION", "BLOCKED"]
@@ -148,4 +148,3 @@ class Draft(BaseModel):
     ai_assisted: bool = True
 
     _slug = field_validator("repository")(slug)
-

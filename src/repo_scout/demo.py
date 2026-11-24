@@ -221,6 +221,8 @@ async def run_demo(root: Path) -> dict:
     stage_records: list[dict] = []
     review_loop: list[dict] = []
     with _DemoStore(root / "data" / "contribution.db") as store:
+        from .demo_review import FixtureCollector
+        fixture = FixtureCollector(store)
         def stage(name: str, **details) -> None:
             stage_records.append({"stage": name, "provenance": "demo", **details})
 
@@ -269,7 +271,8 @@ async def run_demo(root: Path) -> dict:
         finding = accept_validation(store, root, FINDING_ID, validation_report,
                                     attested_cc=True, provenance="demo-simulated-cc-not-executed")
         stage("CONFIRMED", simulated_cc=True, baseline_run_id=baseline["run_id"])
-        approve_finding(store, FINDING_ID, actor="DEMO-SIMULATED-OPERATOR",
+        fixture.review(FINDING_ID,'finding')
+        fixture.approve(approve_finding,store, FINDING_ID, actor="DEMO-SIMULATED-OPERATOR",
                         plan="[DEMO] Add trade-ID deduplication and the observed regression test",
                         scope=["fills.py", "test_regression.py"])
         stage("HUMAN_APPROVED", simulated_approval=True)
@@ -289,13 +292,15 @@ async def run_demo(root: Path) -> dict:
                                     name="Demo Contributor", email="demo@example.invalid")
         record_diff_review(store, FINDING_ID, actor="DEMO-SIMULATED-REVIEWER", approved=True,
                            assessment="[DEMO] Exact patch adds only deduplication and the observed regression test.")
+        fixture.review(FINDING_ID,'diff')
         draft = prepare_draft(store, root, FINDING_ID, submission_type="PR",
                               title="[DEMO] Deduplicate retransmitted fills",
                               body="DEMO ONLY: synthetic local fixture. Real regression failed before the fix and passed after it. "
                                    "CC decisions, approval and upstream publication are simulated. No real PR will be created.",
                               risk="DEMO: preserve distinct executions even when quantities match",
                               fork=DEMO_USER + "/demo-order-ledger")
-        approve_submission(store, FINDING_ID, reviewed_digest=draft["digest"],
+        fixture.review(FINDING_ID,'submission')
+        fixture.approve(approve_submission,store, FINDING_ID, reviewed_digest=draft["digest"],
                            actor="DEMO-SIMULATED-OPERATOR", reason="[DEMO] Approve this exact fixture draft; no public write")
         stage("APPROVED_TO_SUBMIT", simulated_approval=True, digest=draft["digest"], public_write=False)
 
@@ -327,7 +332,7 @@ async def run_demo(root: Path) -> dict:
         requested = await observe("simulated_changes_requested")
         if requested["status"] != "CHANGES_REQUESTED":
             raise RuntimeError("Review request did not enter the expected revision loop")
-        approve_finding(store, FINDING_ID, actor="DEMO-SIMULATED-OPERATOR",
+        fixture.approve(approve_finding,store, FINDING_ID, actor="DEMO-SIMULATED-OPERATOR",
                         plan="[DEMO] Follow review: add equal-quantity and nonadjacent replay coverage; keep the existing fix",
                         scope=["fills.py", "test_regression.py"])
         finding = begin_implementation(store, root, FINDING_ID)
@@ -344,13 +349,15 @@ async def run_demo(root: Path) -> dict:
             raise RuntimeError("Demo revision must produce a new actual Git commit")
         record_diff_review(store, FINDING_ID, actor="DEMO-SIMULATED-REVIEWER", approved=True,
                            assessment="[DEMO] Three real regression tests pass; revision adds focused boundary coverage only.")
+        fixture.review(FINDING_ID,'diff')
         revised_draft = prepare_draft(store, root, FINDING_ID, submission_type="PR_UPDATE",
                                       title="[DEMO] Deduplicate retransmitted fills — review revision",
                                       body="DEMO ONLY: applies simulated maintainer feedback using two additional real regression tests. "
                                            "The local tests pass; no maintainer was contacted and no branch was pushed.",
                                       risk="DEMO: no behavioral scope change beyond the original deduplication fix",
                                       fork=DEMO_USER + "/demo-order-ledger")
-        approve_submission(store, FINDING_ID, reviewed_digest=revised_draft["digest"],
+        fixture.review(FINDING_ID,'submission')
+        fixture.approve(approve_submission,store, FINDING_ID, reviewed_digest=revised_draft["digest"],
                            actor="DEMO-SIMULATED-OPERATOR", reason="[DEMO] Approve exact revised fixture; no public update")
         stage("REVIEW_REVISION_TESTED", actual_execution=True, run_id=revision_run["run_id"],
               first_head=first_head, revised_head=revised_head, simulated_approval=True)

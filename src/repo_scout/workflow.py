@@ -12,6 +12,7 @@ from .common import atomic_write, canonical, digest, now, safe_relative, slug, w
 from .implementation import create_worktree, git, head, push_fork, snapshot
 from .models import Draft, Finding, validate_transition
 from .validation import require_fresh_preflight
+from . import review_gate as gate
 
 
 def add_finding(store, payload: dict) -> dict:
@@ -32,7 +33,7 @@ def add_finding(store, payload: dict) -> dict:
     return store.put("finding", clean["finding_id"], clean, reason="candidate imported; no bug confirmation implied", actor="import")
 
 
-def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: list[str]) -> dict:
+def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: list[str], receipt=None) -> dict:
     finding = store.require("finding", finding_id)
     if finding["status"] not in {"CONFIRMED", "CHANGES_REQUESTED"}:
         raise ValueError("Only confirmed findings or explicit requested revisions may be approved")
@@ -57,7 +58,10 @@ def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: lis
                "review_digest": submission.get("review_digest") if revision else None,
                "previous_head_sha": submission.get("head_sha") if revision else None}
     with store.atomic():
-        approval = store.approve("implementation", finding_id, digest(payload), actor=actor, reason=plan)
+        payload.update(review=gate.require(store,finding_id,'finding'), contribution_type=finding['validation']['recommended_action'])
+        approval = gate.human_gate(store,'implementation',finding_id,payload,actor,plan,receipt)
+        if receipt is None:
+            return approval
         updated = store.put("finding", finding_id, {**finding, "status": "HUMAN_APPROVED", "implementation_payload": payload,
                            "implementation_approval_id": approval["id"]}, reason="human approved exact implementation scope", actor=actor,
                            expected_version=finding["_version"])
@@ -67,6 +71,7 @@ def approve_finding(store, finding_id: str, *, actor: str, plan: str, scope: lis
 def begin_implementation(store, root: Path, finding_id: str) -> dict:
     finding = store.require("finding", finding_id)
     if finding["status"] == "IMPLEMENTING" and finding.get("workspace"):
+        _active_plan(store,finding)
         return finding
     validate_transition(finding["status"], "IMPLEMENTING")
     if finding["status"] != "HUMAN_APPROVED":
@@ -74,7 +79,9 @@ def begin_implementation(store, root: Path, finding_id: str) -> dict:
     payload = finding["implementation_payload"]
     if payload['base_sha'] != finding['base_sha'] or payload['validation_hash'] != digest(finding['validation']):
         raise ValueError('Implementation approval no longer matches validation or commit')
-    store.check_approval("implementation", finding_id, digest(payload))
+    if gate.require(store,finding_id,'finding') != payload.get('review') or payload['contribution_type'] != 'PR':
+        raise ValueError('BLOCKED: current PR implementation authorization required')
+    gate.authorized(store,'implementation',finding_id,payload)
     if payload.get("revision"):
         current_submission = store.require("submission", finding["submission_id"])
         if (current_submission.get("review_digest") != payload["review_digest"] or
@@ -86,7 +93,7 @@ def begin_implementation(store, root: Path, finding_id: str) -> dict:
     if payload.get("revision") and head(workspace) != payload["previous_head_sha"]:
         raise ValueError("Local revision worktree is not at the last submitted head; synchronize it explicitly")
     with store.atomic():
-        store.check_approval("implementation", finding_id, digest(payload), consume=True)
+        gate.authorized(store,'implementation',finding_id,payload,consume=True)
         updated = store.put("finding", finding_id, {**finding, "status": "IMPLEMENTING", "workspace": str(workspace),
                            "branch": branch, "revision": payload.get("revision", False)},
                            reason="isolated implementation worktree prepared", actor="implementation", expected_version=finding["_version"])
@@ -107,6 +114,13 @@ def begin_implementation(store, root: Path, finding_id: str) -> dict:
 
 def _within_scope(path: str, scope: list[str]) -> bool:
     return any(path == p or (p.endswith("/") and path.startswith(p)) for p in scope)
+
+
+def _active_plan(store,f):
+    plan = f.get('implementation_payload',{})
+    if plan.get('review') != gate.require(store,f['finding_id'],'finding'):
+        raise ValueError('BLOCKED: finding acceptance changed')
+    gate.authorized(store,'implementation',f['finding_id'],plan,used_id=f['implementation_approval_id'])
 
 
 def _inspect_publish_history(path: Path, base_sha: str, scope: list[str]) -> None:
@@ -134,6 +148,7 @@ def apply_implementation_patch(store, root: Path, finding_id: str, patch: str) -
     finding = store.require("finding", finding_id)
     if finding["status"] != "IMPLEMENTING":
         raise ValueError("A separately approved implementation must be active")
+    _active_plan(store,finding)
     if secret_reason(patch) or re.search(r"(?:new|old) file mode 120000", patch):
         raise ValueError("Patch contains a credential pattern or a symlink; inspect locally")
     workspace = Path(finding["workspace"])
@@ -168,6 +183,7 @@ def implement_with_cc(store, root: Path, finding_id: str, *, model: str | None =
                             "with regression tests within the approved paths. Do not claim tests ran. Do not emit secrets.\n"+text,
                             schema, model=model, max_budget_usd=max_budget_usd)
     updated = apply_implementation_patch(store, root, finding_id, output["structured_output"]["patch"])
+    updated = store.put('finding',finding_id,{**updated,'implementer_session':output.get('session_id')},expected_version=updated['_version'],reason='bind implementer session')
     store.put("cc_session", output.get("session_id", str(uuid.uuid4())),
               {"finding_id": finding_id, "task": "implementation", "summary": output["structured_output"]["summary"],
                "total_cost_usd": output.get("total_cost_usd"), "captured_at": now()}, reason="CC proposed patch; no test success implied", actor="cc-runner")
@@ -176,6 +192,7 @@ def implement_with_cc(store, root: Path, finding_id: str, *, model: str | None =
 
 def mark_testing(store, finding_id: str) -> dict:
     finding = store.require("finding", finding_id)
+    _active_plan(store,finding)
     validate_transition(finding["status"], "TESTING")
     return store.put("finding", finding_id, {**finding, "status": "TESTING"}, reason="explicit test stage", actor="runner")
 
@@ -230,7 +247,7 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
         raise ValueError("Draft contains a possible secret")
     repo = store.require("repository", finding["repository"])
     kwargs = dict(finding_id=finding_id, repository=finding["repository"], submission_type=submission_type,
-                  title=title, body=body, base_branch=repo["default_branch"], base_sha=finding["base_sha"], risk=risk, prepared_at=now())
+                   title=title, body=body, base_branch=repo["default_branch"], base_sha=finding["base_sha"], risk=risk, prepared_at=now())
     if "AI-assisted" not in body:
         kwargs["body"] += "\n\nAI-assisted contribution; independently validated and reviewed by the contributor."
     if submission_type in {"PR", "PR_UPDATE"}:
@@ -245,9 +262,8 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
             raise ValueError("Changed files exceed the approved scope")
         _inspect_publish_history(Path(finding["workspace"]), finding["base_sha"], finding["implementation_payload"]["scope"])
         runs = _passing_runs(store, finding, state)
-        review = store.require("diff_review", finding_id)
-        if not review["approved"] or review["tree_hash"] != state["tree_hash"] or review["diff_hash"] != state["diff_hash"]:
-            raise ValueError("The exact final diff needs an independent or human review")
+        _active_plan(store,finding)
+        gate.require(store,finding_id,'diff')
         slug(fork)
         kwargs.update(head_sha=state["head_sha"], branch=finding["branch"], fork=fork, diff_hash=state["diff_hash"],
                       changed_files=state["changed_files"], test_run_ids=[r["run_id"] for r in runs],
@@ -256,10 +272,23 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
             raise ValueError("PR_UPDATE requires an approved maintainer revision")
     elif finding["status"] not in {"HUMAN_APPROVED", "READY_FOR_REVIEW", "APPROVED_TO_SUBMIT"}:
         raise ValueError("Issue drafting requires the first human approval")
-    draft = Draft(**kwargs).model_dump()
+    draft = Draft(**kwargs).model_dump(exclude={'prepared_at'})
     draft_hash = digest(draft)
     with store.atomic():
-        store.put("draft", finding_id, {"draft": draft, "digest": draft_hash}, reason="exact public draft prepared", actor="draft")
+        previous = store.get('draft',finding_id)
+        if previous:
+            op = store.operation('submit:'+finding_id+':'+previous['digest'])
+            if op and op['status'] in {'SENDING','UNKNOWN'}:
+                raise ValueError('Reconcile previous write before replacing the draft')
+        if submission_type=='ISSUE' and finding['status']=='HUMAN_APPROVED':
+            plan = finding['implementation_payload']
+            if plan.get('contribution_type')!='ISSUE' or plan.get('review')!=gate.require(store,finding_id,'finding'):
+                raise ValueError('Issue not authorized by current implementation plan')
+            gate.authorized(store,'implementation',finding_id,plan,consume=True)
+        _active_plan(store,finding)
+        if finding['implementation_payload']['contribution_type'] != ('ISSUE' if submission_type=='ISSUE' else 'PR'):
+            raise ValueError('Draft differs from authorized contribution type')
+        store.put("draft", finding_id, {"draft": draft, "digest": draft_hash,'prepared_at':now()}, reason="exact public draft prepared", actor="draft")
         validate_transition(finding["status"], "READY_FOR_REVIEW")
         updated = store.put("finding", finding_id, {**finding, "status": "READY_FOR_REVIEW", "draft_digest": draft_hash},
                             reason="tests and diff ready for final user approval", actor="draft", expected_version=finding["_version"])
@@ -274,14 +303,24 @@ def prepare_draft(store, root: Path, finding_id: str, *, submission_type: str, t
     return {"draft": draft, "digest": draft_hash, "finding": updated}
 
 
-def approve_submission(store, finding_id: str, *, reviewed_digest: str, actor: str, reason: str) -> dict:
+def _submission_authority(store,f,current):
+    _active_plan(store,f)
+    fid = f['finding_id']
+    return {'draft_digest':current['digest'],'submission_review':gate.require(store,fid,'submission'),
+            'diff_review':gate.require(store,fid,'diff') if current['draft']['submission_type']!='ISSUE' else None,
+            'implementation_approval_id':f['implementation_approval_id']}
+
+
+def approve_submission(store, finding_id: str, *, reviewed_digest: str, actor: str, reason: str, receipt=None) -> dict:
     finding = store.require("finding", finding_id)
     validate_transition(finding["status"], "APPROVED_TO_SUBMIT")
     current = store.require("draft", finding_id)
     if current["digest"] != reviewed_digest or digest(current["draft"]) != reviewed_digest:
         raise ValueError("The supplied digest is not the exact current draft")
     with store.atomic():
-        approval = store.approve("submission", finding_id, reviewed_digest, actor=actor, reason=reason)
+        approval = gate.human_gate(store,'submission',finding_id,_submission_authority(store,finding,current),actor,reason,receipt)
+        if receipt is None:
+            return {**approval,'package':gate.artifact(store,finding_id,'submission'),'reviews':gate.status(store,finding_id,'submission')}
         store.put("finding", finding_id, {**finding, "status": "APPROVED_TO_SUBMIT"}, reason="final human submission approval",
                   actor=actor, expected_version=finding["_version"])
     return approval
@@ -344,7 +383,7 @@ async def submit(store, client, root: Path, config: dict, finding_id: str, *, pu
         raise ValueError("Previous write outcome is uncertain. Use reconcile-submit; do not create a duplicate public submission")
     if finding["status"] != "APPROVED_TO_SUBMIT":
         raise ValueError("Final submission approval is required")
-    store.check_approval("submission", finding_id, current["digest"])
+    gate.authorized(store,'submission',finding_id,_submission_authority(store,finding,current))
     require_fresh_preflight(finding, config["validation"]["preflight_max_age_hours"])
     _verify_local_draft(store, finding, draft)
     await _verify_target(client, config, finding, draft)
@@ -386,7 +425,10 @@ async def submit(store, client, root: Path, config: dict, finding_id: str, *, pu
             operation = store.operation(operation_id)
         if operation["status"] != "PREPARED":
             raise ValueError("Submission operation is not ready")
-        store.check_approval("submission", finding_id, current["digest"], consume=True)
+        fresh = store.require('finding',finding_id)
+        if fresh['_version'] != finding['_version'] or store.require('draft',finding_id) != current:
+            raise ValueError('State changed during submission preflight')
+        gate.authorized(store,'submission',finding_id,_submission_authority(store,fresh,current),consume=True)
         store.finish_operation(operation_id, "SENDING")
     try:
         if draft["submission_type"] in {"PR", "PR_UPDATE"}:
@@ -499,13 +541,14 @@ async def prepare_profile(store, client, root: Path, config: dict) -> dict:
     return value
 
 
-def approve_profile(store, config: dict, *, reviewed_digest: str, actor: str, reason: str) -> dict:
+def approve_profile(store, config: dict, *, reviewed_digest: str, actor: str, reason: str, receipt=None) -> dict:
     current = store.require("profile_draft", config["profile_repository"])
     if current["digest"] != reviewed_digest or digest(current["draft"]) != reviewed_digest:
         raise ValueError("Profile approval must match the exact current diff")
     if not current["draft"]["diff"]:
         raise ValueError("No Profile changes to approve")
-    return store.approve("profile", config["profile_repository"], reviewed_digest, actor=actor, reason=reason)
+    subject = config['profile_repository']
+    return gate.human_gate(store,'profile',subject,[reviewed_digest,gate.require(store,subject,'profile')],actor,reason,receipt)
 
 
 async def publish_profile(store, client, config: dict) -> dict:
@@ -524,7 +567,7 @@ async def publish_profile(store, client, config: dict) -> dict:
             store.finish_operation(key, "SUCCEEDED", result)
             return result
         raise ValueError("Profile write outcome is uncertain; inspect remote content before retrying")
-    store.check_approval("profile", draft["repository"], current["digest"])
+    gate.authorized(store,'profile',draft['repository'],[current['digest'],gate.require(store,draft['repository'],'profile')])
     identity = await client.authenticated_user(write=True)
     if identity["login"].casefold() != config["username"].casefold():
         raise ValueError("GitHub write token belongs to a different account")
@@ -549,7 +592,7 @@ async def publish_profile(store, client, config: dict) -> dict:
         pending = store.begin_operation(key, {"repository": draft["repository"], "payload": payload})
         if pending["status"] not in {"PREPARED", "FAILED"}:
             raise ValueError("Profile write is already in progress; reconcile before retrying")
-        store.check_approval("profile", draft["repository"], current["digest"], consume=True)
+        gate.authorized(store,'profile',draft['repository'],[current['digest'],gate.require(store,draft['repository'],'profile')],consume=True)
         store.finish_operation(key, "SENDING")
     try:
         result = await client.put(f"/repos/{draft['repository']}/contents/{quote(draft['path'], safe='/')}", payload, authorized=True)

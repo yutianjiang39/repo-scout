@@ -1,8 +1,61 @@
 [
-  {"repository":"infinitefield/hypersdk","kind":"issue","key":"111","title":"Q96 价格换算：平价 panic 与小数截断","status":"OPEN","observed_at":"2026-11-24","url":"https://github.com/infinitefield/hypersdk/issues/111","material":"pilot-data/hypersdk-review/price-issue.md"},
-  {"repository":"infinitefield/hypersdk","kind":"pr","key":"112","title":"Uniswap 仓位上界 tick 不应标为活跃","status":"OPEN","observed_at":"2026-11-24","url":"https://github.com/infinitefield/hypersdk/pull/112","material":"pilot-data/hypersdk-review/upper-tick.diff"},
-  {"repository":"infinitefield/hypersdk","kind":"draft","key":"zero-wei","title":"to_wei(0,78) 对零金额报溢出","status":"DEFERRED","observed_at":"2026-11-24","material":"pilot-data/hypersdk-review/zero-wei-pr.md"},
-  {"repository":"petl-developers/petl","kind":"pr","key":"841","title":"Preserve data rows from one-shot inputs in crossjoin","status":"OPEN","observed_at":"2026-11-24","url":"https://github.com/petl-developers/petl/pull/841","material":"pilot-data/manual-petl-crossjoin/fix.diff"},
-  {"repository":"sphinx-doc/sphinx","kind":"comment","key":"7126064030","title":"#9935：补充 HTML/gettext 对照构建证据","status":"POSTED","observed_at":"2026-11-24","url":"https://github.com/sphinx-doc/sphinx/issues/9935#issuecomment-7126064030","material":"pilot-data/manual-sphinx-9935/comment.md"},
-  {"repository":"hyperliquid-dex/hyperliquid-python-sdk","kind":"issue","key":"348","title":"Which Poetry version should contributors use for make lockfile-update-full?","status":"OPEN","observed_at":"2026-11-24","url":"https://github.com/hyperliquid-dex/hyperliquid-python-sdk/issues/348","material":"pilot-data/manual-01/HL-POETRY-01.md"}
+  {
+    "repository": "infinitefield/hypersdk",
+    "kind": "issue",
+    "key": "111",
+    "title": "Q96 价格换算：平价 panic 与小数截断",
+    "status": "OPEN",
+    "observed_at": "2026-11-24",
+    "url": "https://github.com/infinitefield/hypersdk/issues/111",
+    "material": "pilot-data/hypersdk-review/price-issue.md"
+  },
+  {
+    "repository": "infinitefield/hypersdk",
+    "kind": "pr",
+    "key": "112",
+    "title": "Uniswap 仓位上界 tick 不应标为活跃",
+    "status": "OPEN",
+    "observed_at": "2026-11-24",
+    "url": "https://github.com/infinitefield/hypersdk/pull/112",
+    "material": "pilot-data/hypersdk-review/upper-tick.diff"
+  },
+  {
+    "repository": "infinitefield/hypersdk",
+    "kind": "draft",
+    "key": "zero-wei",
+    "title": "to_wei(0,78) 对零金额报溢出",
+    "status": "DEFERRED",
+    "observed_at": "2026-11-24",
+    "material": "pilot-data/hypersdk-review/zero-wei-pr.md"
+  },
+  {
+    "repository": "petl-developers/petl",
+    "kind": "pr",
+    "key": "841",
+    "title": "Preserve data rows from one-shot inputs in crossjoin",
+    "status": "OPEN",
+    "observed_at": "2026-11-24",
+    "url": "https://github.com/petl-developers/petl/pull/841",
+    "material": "pilot-data/manual-petl-crossjoin/fix.diff"
+  },
+  {
+    "repository": "sphinx-doc/sphinx",
+    "kind": "comment",
+    "key": "7126064030",
+    "title": "#9935：补充 HTML/gettext 对照构建证据",
+    "status": "POSTED",
+    "observed_at": "2026-11-24",
+    "url": "https://github.com/sphinx-doc/sphinx/issues/9935#issuecomment-7126064030",
+    "material": "pilot-data/manual-sphinx-9935/comment.md"
+  },
+  {
+    "repository": "hyperliquid-dex/hyperliquid-python-sdk",
+    "kind": "issue",
+    "key": "348",
+    "title": "Which Poetry version should contributors use for make lockfile-update-full?",
+    "status": "OPEN",
+    "observed_at": "2026-11-24",
+    "url": "https://github.com/hyperliquid-dex/hyperliquid-python-sdk/issues/348",
+    "material": "pilot-data/manual-01/HL-POETRY-01.md"
+  }
 ]

@@ -61,17 +61,27 @@ class Store:
                 updated_at TEXT NOT NULL);
         """)
         with self.atomic():
-            version = self.connection.execute('SELECT version FROM schema_version').fetchone()[0]
+            version = self.connection.execute(
+                "SELECT version FROM schema_version"
+            ).fetchone()[0]
             if version not in (1, 2):
-                raise ValueError('Unsupported database version')
+                raise ValueError("Unsupported database version")
             if version == 1:
-                self.connection.execute('CREATE TABLE review_rounds(seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, subject TEXT NOT NULL, kind TEXT NOT NULL, artifact TEXT NOT NULL, policy TEXT NOT NULL)')
-                self.connection.execute('CREATE INDEX current_round ON review_rounds(subject,kind,seq DESC)')
-                self.connection.execute('CREATE TABLE review_receipts(round_id TEXT NOT NULL REFERENCES review_rounds(id), role TEXT NOT NULL, phase TEXT NOT NULL, session TEXT NOT NULL UNIQUE, envelope TEXT NOT NULL, PRIMARY KEY(round_id,role,phase))')
-                for table in ('review_rounds', 'review_receipts'):
-                    for action in ('UPDATE','DELETE'):
-                        self.connection.execute(f"CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'immutable review history'); END")
-                self.connection.execute('UPDATE schema_version SET version=2')
+                self.connection.execute(
+                    "CREATE TABLE review_rounds(seq INTEGER PRIMARY KEY, id TEXT UNIQUE NOT NULL, subject TEXT NOT NULL, kind TEXT NOT NULL, artifact TEXT NOT NULL, policy TEXT NOT NULL)"
+                )
+                self.connection.execute(
+                    "CREATE INDEX current_round ON review_rounds(subject,kind,seq DESC)"
+                )
+                self.connection.execute(
+                    "CREATE TABLE review_receipts(round_id TEXT NOT NULL REFERENCES review_rounds(id), role TEXT NOT NULL, phase TEXT NOT NULL, session TEXT NOT NULL UNIQUE, envelope TEXT NOT NULL, PRIMARY KEY(round_id,role,phase))"
+                )
+                for table in ("review_rounds", "review_receipts"):
+                    for action in ("UPDATE", "DELETE"):
+                        self.connection.execute(
+                            f"CREATE TRIGGER {table}_no_{action} BEFORE {action} ON {table} BEGIN SELECT RAISE(ABORT,'immutable review history'); END"
+                        )
+                self.connection.execute("UPDATE schema_version SET version=2")
 
     def close(self) -> None:
         self.connection.close()
@@ -98,7 +108,9 @@ class Store:
             self.connection.execute(f"RELEASE {name}" if nested else "COMMIT")
 
     def get(self, kind: str, key: str) -> dict | None:
-        row = self.connection.execute("SELECT data,version FROM records WHERE kind=? AND id=?", (kind, key)).fetchone()
+        row = self.connection.execute(
+            "SELECT data,version FROM records WHERE kind=? AND id=?", (kind, key)
+        ).fetchone()
         if row is None:
             return None
         return {**json.loads(row["data"]), "_version": row["version"]}
@@ -110,87 +122,179 @@ class Store:
         return value
 
     def list(self, kind: str) -> list[dict]:
-        rows = self.connection.execute("SELECT data,version FROM records WHERE kind=? ORDER BY id", (kind,)).fetchall()
+        rows = self.connection.execute(
+            "SELECT data,version FROM records WHERE kind=? ORDER BY id", (kind,)
+        ).fetchall()
         return [{**json.loads(r["data"]), "_version": r["version"]} for r in rows]
 
-    def put(self, kind: str, key: str, data: dict, *, reason: str = "", actor: str = "local",
-            evidence: Any = None, expected_version: int | None = None) -> dict:
+    def put(
+        self,
+        kind: str,
+        key: str,
+        data: dict,
+        *,
+        reason: str = "",
+        actor: str = "local",
+        evidence: Any = None,
+        expected_version: int | None = None,
+    ) -> dict:
         clean = {k: v for k, v in data.items() if k != "_version"}
         encoded = canonical(clean)
         with self.atomic():
             old = self.get(kind, key)
             version = old["_version"] if old else 0
             if expected_version is not None and version != expected_version:
-                raise ConflictError(f"Concurrent update of {kind}/{key}: expected {expected_version}, found {version}")
-            if old and canonical({k: v for k, v in old.items() if k != "_version"}) == encoded:
+                raise ConflictError(
+                    f"Concurrent update of {kind}/{key}: expected {expected_version}, found {version}"
+                )
+            if (
+                old
+                and canonical({k: v for k, v in old.items() if k != "_version"})
+                == encoded
+            ):
                 return old
             status = clean.get("status", clean.get("state"))
-            previous = (old.get("status", old.get("state")) if old else None)
+            previous = old.get("status", old.get("state")) if old else None
             timestamp = now()
-            self.connection.execute("""INSERT INTO records VALUES(?,?,?,?,?,?)
+            self.connection.execute(
+                """INSERT INTO records VALUES(?,?,?,?,?,?)
                 ON CONFLICT(kind,id) DO UPDATE SET version=excluded.version,status=excluded.status,
-                data=excluded.data,updated_at=excluded.updated_at""", (kind, key, version+1, status, encoded, timestamp))
-            self.connection.execute("""INSERT INTO events(kind,entity_id,old_status,new_status,revision,reason,actor,evidence,payload_hash,at)
-                VALUES(?,?,?,?,?,?,?,?,?,?)""", (kind, key, previous, status, version+1, reason, actor, canonical(evidence or []), digest(clean), timestamp))
-        return {**clean, "_version": version+1}
+                data=excluded.data,updated_at=excluded.updated_at""",
+                (kind, key, version + 1, status, encoded, timestamp),
+            )
+            self.connection.execute(
+                """INSERT INTO events(kind,entity_id,old_status,new_status,revision,reason,actor,evidence,payload_hash,at)
+                VALUES(?,?,?,?,?,?,?,?,?,?)""",
+                (
+                    kind,
+                    key,
+                    previous,
+                    status,
+                    version + 1,
+                    reason,
+                    actor,
+                    canonical(evidence or []),
+                    digest(clean),
+                    timestamp,
+                ),
+            )
+        return {**clean, "_version": version + 1}
 
     def events(self, kind: str | None = None, key: str | None = None) -> list[dict]:
         clauses, params = [], []
         if kind is not None:
-            clauses.append("kind=?"); params.append(kind)
+            clauses.append("kind=?")
+            params.append(kind)
         if key is not None:
-            clauses.append("entity_id=?"); params.append(key)
+            clauses.append("entity_id=?")
+            params.append(key)
         where = " WHERE " + " AND ".join(clauses) if clauses else ""
-        rows = self.connection.execute("SELECT * FROM events" + where + " ORDER BY seq", params)
+        rows = self.connection.execute(
+            "SELECT * FROM events" + where + " ORDER BY seq", params
+        )
         return [{**dict(row), "evidence": json.loads(row["evidence"])} for row in rows]
 
     def cache_get(self, namespace: str, key: str) -> dict | None:
-        row = self.connection.execute("SELECT value FROM cache WHERE namespace=? AND key=?", (namespace, key)).fetchone()
+        row = self.connection.execute(
+            "SELECT value FROM cache WHERE namespace=? AND key=?", (namespace, key)
+        ).fetchone()
         return json.loads(row[0]) if row else None
 
     def cache_set(self, namespace: str, key: str, value: dict) -> None:
-        self.connection.execute("INSERT OR REPLACE INTO cache VALUES(?,?,?,?)", (namespace, key, canonical(value), now()))
+        self.connection.execute(
+            "INSERT OR REPLACE INTO cache VALUES(?,?,?,?)",
+            (namespace, key, canonical(value), now()),
+        )
 
-    def approve(self, kind: str, key: str, payload_digest: str, *, actor: str, reason: str, hours: int = 48) -> dict:
+    def approve(
+        self,
+        kind: str,
+        key: str,
+        payload_digest: str,
+        *,
+        actor: str,
+        reason: str,
+        hours: int = 48,
+    ) -> dict:
         if not actor.strip() or not reason.strip() or not 1 <= hours <= 168:
-            raise ValueError("Approval requires an explicit actor, reason and expiry of 1..168 hours")
-        record = {"id": "APP-"+uuid.uuid4().hex[:16], "kind": kind, "entity_id": key,
-                  "digest": payload_digest, "actor": actor, "created_at": now(),
-                  "expires_at": (datetime.now(timezone.utc)+timedelta(hours=hours)).isoformat(),
-                  "consumed_at": None, "reason": reason}
+            raise ValueError(
+                "Approval requires an explicit actor, reason and expiry of 1..168 hours"
+            )
+        record = {
+            "id": "APP-" + uuid.uuid4().hex[:16],
+            "kind": kind,
+            "entity_id": key,
+            "digest": payload_digest,
+            "actor": actor,
+            "created_at": now(),
+            "expires_at": (
+                datetime.now(timezone.utc) + timedelta(hours=hours)
+            ).isoformat(),
+            "consumed_at": None,
+            "reason": reason,
+        }
         with self.atomic():
-            existing = self.connection.execute('''SELECT * FROM approvals WHERE kind=? AND entity_id=? AND digest=?
-                AND consumed_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 1''',
-                (kind, key, payload_digest, now())).fetchone()
+            existing = self.connection.execute(
+                """SELECT * FROM approvals WHERE kind=? AND entity_id=? AND digest=?
+                AND consumed_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 1""",
+                (kind, key, payload_digest, now()),
+            ).fetchone()
             if existing:
                 return dict(existing)
-            self.connection.execute("INSERT INTO approvals VALUES(:id,:kind,:entity_id,:digest,:actor,:created_at,:expires_at,:consumed_at,:reason)", record)
+            self.connection.execute(
+                "INSERT INTO approvals VALUES(:id,:kind,:entity_id,:digest,:actor,:created_at,:expires_at,:consumed_at,:reason)",
+                record,
+            )
             self.put("approval", record["id"], record, reason=reason, actor=actor)
         return record
 
-    def check_approval(self, kind: str, key: str, payload_digest: str, *, consume: bool = False) -> dict:
+    def check_approval(
+        self, kind: str, key: str, payload_digest: str, *, consume: bool = False
+    ) -> dict:
         with self.atomic():
-            row = self.connection.execute("""SELECT * FROM approvals WHERE kind=? AND entity_id=? AND digest=?
-                AND consumed_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 1""", (kind, key, payload_digest, now())).fetchone()
+            row = self.connection.execute(
+                """SELECT * FROM approvals WHERE kind=? AND entity_id=? AND digest=?
+                AND consumed_at IS NULL AND expires_at>? ORDER BY created_at DESC LIMIT 1""",
+                (kind, key, payload_digest, now()),
+            ).fetchone()
             if row is None:
-                raise ValueError("Missing, expired, already consumed or stale approval. Review the exact current payload and approve it.")
+                raise ValueError(
+                    "Missing, expired, already consumed or stale approval. Review the exact current payload and approve it."
+                )
             result = dict(row)
             if consume:
                 result["consumed_at"] = now()
                 # Older databases can contain duplicate confirmations. None may
                 # survive an attempted send as authorization for another try.
-                for sibling in self.connection.execute('''SELECT * FROM approvals WHERE kind=? AND entity_id=?
-                        AND digest=? AND consumed_at IS NULL''', (kind,key,payload_digest)).fetchall():
-                    self.connection.execute('UPDATE approvals SET consumed_at=? WHERE id=?',(result['consumed_at'],sibling['id']))
-                    self.put('approval',sibling['id'],{**dict(sibling),'consumed_at':result['consumed_at']},
-                             reason='approval consumed by exact authorized action',actor='workflow')
+                for sibling in self.connection.execute(
+                    """SELECT * FROM approvals WHERE kind=? AND entity_id=?
+                        AND digest=? AND consumed_at IS NULL""",
+                    (kind, key, payload_digest),
+                ).fetchall():
+                    self.connection.execute(
+                        "UPDATE approvals SET consumed_at=? WHERE id=?",
+                        (result["consumed_at"], sibling["id"]),
+                    )
+                    self.put(
+                        "approval",
+                        sibling["id"],
+                        {**dict(sibling), "consumed_at": result["consumed_at"]},
+                        reason="approval consumed by exact authorized action",
+                        actor="workflow",
+                    )
             return result
 
     def operation(self, key: str) -> dict | None:
-        row = self.connection.execute("SELECT * FROM operations WHERE id=?", (key,)).fetchone()
+        row = self.connection.execute(
+            "SELECT * FROM operations WHERE id=?", (key,)
+        ).fetchone()
         if not row:
             return None
-        return {**dict(row), "payload": json.loads(row["payload"]), "result": json.loads(row["result"]) if row["result"] else None}
+        return {
+            **dict(row),
+            "payload": json.loads(row["payload"]),
+            "result": json.loads(row["result"]) if row["result"] else None,
+        }
 
     def begin_operation(self, key: str, payload: dict) -> dict:
         with self.atomic():
@@ -199,10 +303,26 @@ class Store:
                 if old["digest"] != digest(payload):
                     raise ConflictError("Operation ID reused with different content")
                 return old
-            self.connection.execute("INSERT INTO operations VALUES(?,?,?,?,?,?,?)", (key, digest(payload), "PREPARED", canonical(payload), None, now(), now()))
+            self.connection.execute(
+                "INSERT INTO operations VALUES(?,?,?,?,?,?,?)",
+                (
+                    key,
+                    digest(payload),
+                    "PREPARED",
+                    canonical(payload),
+                    None,
+                    now(),
+                    now(),
+                ),
+            )
             return self.operation(key)  # type: ignore[return-value]
 
-    def finish_operation(self, key: str, status: str, result: dict | None = None) -> None:
+    def finish_operation(
+        self, key: str, status: str, result: dict | None = None
+    ) -> None:
         if status not in {"PREPARED", "SENDING", "SUCCEEDED", "UNKNOWN", "FAILED"}:
             raise ValueError("Invalid outbox state")
-        self.connection.execute("UPDATE operations SET status=?,result=?,updated_at=? WHERE id=?", (status, canonical(result) if result else None, now(), key))
+        self.connection.execute(
+            "UPDATE operations SET status=?,result=?,updated_at=? WHERE id=?",
+            (status, canonical(result) if result else None, now(), key),
+        )

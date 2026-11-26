@@ -3,6 +3,7 @@
 No repository code is imported or executed. All paths in the manifest refer to
 the original repository; the generated ``files/`` tree keeps that same layout.
 """
+
 from __future__ import annotations
 
 import ast
@@ -18,26 +19,83 @@ from typing import Any
 
 
 EXCLUDED_DIRS = {
-    ".git", "node_modules", "target", "venv", ".venv", "env", "dist", "build",
-    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", "htmlcov",
-    "coverage", ".next", "vendor", "third_party", ".tox", ".idea", ".vscode",
+    ".git",
+    "node_modules",
+    "target",
+    "venv",
+    ".venv",
+    "env",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "htmlcov",
+    "coverage",
+    ".next",
+    "vendor",
+    "third_party",
+    ".tox",
+    ".idea",
+    ".vscode",
 }
-SENSITIVE_NAMES = {".mcp.json", ".netrc", ".npmrc", ".pypirc", "credentials", "credentials.json", "id_rsa",
-                   "id_ed25519", "secrets.json", "secrets.yaml", "secrets.yml"}
-BINARY_SUFFIXES = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip",
-                   ".gz", ".tar", ".7z", ".mp3", ".mp4", ".wav", ".woff", ".woff2",
-                   ".exe", ".dll", ".so", ".dylib", ".pyc", ".sqlite", ".db", ".bin"}
+SENSITIVE_NAMES = {
+    ".mcp.json",
+    ".netrc",
+    ".npmrc",
+    ".pypirc",
+    "credentials",
+    "credentials.json",
+    "id_rsa",
+    "id_ed25519",
+    "secrets.json",
+    "secrets.yaml",
+    "secrets.yml",
+}
+BINARY_SUFFIXES = {
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".gif",
+    ".webp",
+    ".ico",
+    ".pdf",
+    ".zip",
+    ".gz",
+    ".tar",
+    ".7z",
+    ".mp3",
+    ".mp4",
+    ".wav",
+    ".woff",
+    ".woff2",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".pyc",
+    ".sqlite",
+    ".db",
+    ".bin",
+}
 SECRET_PATTERNS = [
     re.compile(r"-----BEGIN (?:[A-Z ]+ )?PRIVATE KEY-----"),
     re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b"),
     re.compile(r"\b(?:AKIA|ASIA)[A-Z0-9]{16}\b"),
     re.compile(r"(?i)\bbearer\s+[\w./+=~-]{8,}"),
-    re.compile(r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s/@:]+:[^\s/@]+@"),
+    re.compile(
+        r"(?i)\b(?:postgres(?:ql)?|mysql|mongodb(?:\+srv)?|redis)://[^\s/@:]+:[^\s/@]+@"
+    ),
     re.compile(r"\bsk-(?:proj-|ant-)?[A-Za-z0-9_-]{24,}\b"),
     re.compile(r"\bAIza[A-Za-z0-9_-]{30,}\b"),
-    re.compile(r"(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password)"
-               r"['\"]?\s*[:=]\s*['\"]([^'\"\r\n]{4,})['\"]"),
-    re.compile(r"(?im)^\s*(?:aws_secret_access_key|password|api[_-]?key|access[_-]?token)\s*[:=]\s*(?!os\.environ\b|os\.getenv\b)([^\s'\"#]{4,})"),
+    re.compile(
+        r"(?i)(?:api[_-]?key|access[_-]?token|auth[_-]?token|client[_-]?secret|password)"
+        r"['\"]?\s*[:=]\s*['\"]([^'\"\r\n]{4,})['\"]"
+    ),
+    re.compile(
+        r"(?im)^\s*(?:aws_secret_access_key|password|api[_-]?key|access[_-]?token)\s*[:=]\s*(?!os\.environ\b|os\.getenv\b)([^\s'\"#]{4,})"
+    ),
 ]
 
 
@@ -83,9 +141,16 @@ def _git(root: Path, *args: str) -> str:
     try:
         result = subprocess.run(
             ["git", "-c", "core.hooksPath=/dev/null", "-C", str(root), *args],
-            capture_output=True, text=True, timeout=15, check=False,
-            env={"PATH": os.environ.get("PATH", ""), "GIT_TERMINAL_PROMPT": "0",
-                 "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull},
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            env={
+                "PATH": os.environ.get("PATH", ""),
+                "GIT_TERMINAL_PROMPT": "0",
+                "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_CONFIG_GLOBAL": os.devnull,
+            },
         )
         return result.stdout.strip() if result.returncode == 0 else ""
     except (OSError, subprocess.TimeoutExpired):
@@ -104,7 +169,9 @@ def _imports(tree: ast.AST | None) -> list[str]:
     return sorted(result)
 
 
-def chunk_source(repository: str, path: str, content: str, *, chunk_tokens: int = 4000) -> list[dict]:
+def chunk_source(
+    repository: str, path: str, content: str, *, chunk_tokens: int = 4000
+) -> list[dict]:
     if chunk_tokens < 64:
         raise ValueError("chunk_tokens must be at least 64")
     lines = content.splitlines(keepends=True)
@@ -119,7 +186,9 @@ def chunk_source(repository: str, path: str, content: str, *, chunk_tokens: int 
     boundaries = {1, len(lines) + 1}
     if tree is not None:
         for node in tree.body:
-            start = min([node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])])
+            start = min(
+                [node.lineno] + [d.lineno for d in getattr(node, "decorator_list", [])]
+            )
             boundaries.add(start)
             boundaries.add(getattr(node, "end_lineno", node.lineno) + 1)
     else:
@@ -130,21 +199,24 @@ def chunk_source(repository: str, path: str, content: str, *, chunk_tokens: int 
     ranges: list[tuple[int, int, bool]] = []
     start = end = None
     for left, right in atoms:
-        atom_tokens = token_estimate("".join(lines[left - 1:right]))
+        atom_tokens = token_estimate("".join(lines[left - 1 : right]))
         if atom_tokens > chunk_tokens:
             if start is not None:
                 ranges.append((start, end, False))
                 start = end = None
             split_start = left
             for line_no in range(left, right + 1):
-                if (line_no > split_start and
-                        token_estimate("".join(lines[split_start - 1:line_no])) > chunk_tokens):
+                if (
+                    line_no > split_start
+                    and token_estimate("".join(lines[split_start - 1 : line_no]))
+                    > chunk_tokens
+                ):
                     ranges.append((split_start, line_no - 1, True))
                     split_start = line_no
             ranges.append((split_start, right, True))
         elif start is None:
             start, end = left, right
-        elif token_estimate("".join(lines[start - 1:right])) <= chunk_tokens:
+        elif token_estimate("".join(lines[start - 1 : right])) <= chunk_tokens:
             end = right
         else:
             ranges.append((start, end, False))
@@ -154,20 +226,34 @@ def chunk_source(repository: str, path: str, content: str, *, chunk_tokens: int 
     chunks = []
     imports = _imports(tree)
     for start, end, partial in ranges:
-        text = "".join(lines[start - 1:end])
+        text = "".join(lines[start - 1 : end])
         digest = _hash(text)
-        chunks.append({
-            "chunk_id": _hash(f"{repository}:{path}:{start}:{end}:{digest}")[:24],
-            "repository": repository, "file_path": path, "line_start": start, "line_end": end,
-            "content_hash": digest, "content": text, "dependencies": imports,
-            "token_estimate": token_estimate(text), "partial": partial,
-            "split_reason": "oversized_statement_or_function" if partial else None,
-        })
+        chunks.append(
+            {
+                "chunk_id": _hash(f"{repository}:{path}:{start}:{end}:{digest}")[:24],
+                "repository": repository,
+                "file_path": path,
+                "line_start": start,
+                "line_end": end,
+                "content_hash": digest,
+                "content": text,
+                "dependencies": imports,
+                "token_estimate": token_estimate(text),
+                "partial": partial,
+                "split_reason": "oversized_statement_or_function" if partial else None,
+            }
+        )
     return chunks
 
 
-def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
-                   max_file_bytes: int = 500_000, chunk_tokens: int = 4000) -> dict:
+def prepare_bundle(
+    repository_path: Path,
+    output: Path,
+    *,
+    repository: str = "",
+    max_file_bytes: int = 500_000,
+    chunk_tokens: int = 4000,
+) -> dict:
     root = Path(repository_path).resolve(strict=True)
     output = Path(output).absolute()
     if not root.is_dir():
@@ -189,20 +275,37 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
         directory = Path(directory)
         for name in sorted(dirnames[:]):
             p = directory / name
-            hidden = name.startswith('.') and name.casefold() != '.github'
+            hidden = name.startswith(".") and name.casefold() != ".github"
             if p.is_symlink() or hidden or name.casefold() in EXCLUDED_DIRS:
                 dirnames.remove(name)
-                excluded.append({"path": p.relative_to(root).as_posix() + "/",
-                                 "reason": "symlink" if p.is_symlink() else "private_configuration" if hidden and name not in EXCLUDED_DIRS else "generated_or_vendor_directory"})
+                excluded.append(
+                    {
+                        "path": p.relative_to(root).as_posix() + "/",
+                        "reason": "symlink"
+                        if p.is_symlink()
+                        else "private_configuration"
+                        if hidden and name not in EXCLUDED_DIRS
+                        else "generated_or_vendor_directory",
+                    }
+                )
         for name in sorted(filenames):
             path = directory / name
             relative = path.relative_to(root).as_posix()
             reason = None
             if path.is_symlink():
                 reason = "symlink"
-            elif name.lower().startswith(".env") or name.lower() in SENSITIVE_NAMES or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}:
+            elif (
+                name.lower().startswith(".env")
+                or name.lower() in SENSITIVE_NAMES
+                or path.suffix.lower() in {".pem", ".key", ".p12", ".pfx"}
+            ):
                 reason = "sensitive_filename"
-            elif name.startswith('.') or name.casefold() in {'claude.md', 'agents.md', 'gemini.md', 'mcp.json'}:
+            elif name.startswith(".") or name.casefold() in {
+                "claude.md",
+                "agents.md",
+                "gemini.md",
+                "mcp.json",
+            }:
                 reason = "private_configuration"
             elif path.suffix.lower() in BINARY_SUFFIXES:
                 reason = "binary_or_media"
@@ -225,25 +328,46 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
                 continue
             destination = output / "files" / relative
             _write(destination, raw)
-            file_chunks = chunk_source(repository, relative, content, chunk_tokens=chunk_tokens)
+            file_chunks = chunk_source(
+                repository, relative, content, chunk_tokens=chunk_tokens
+            )
             chunks.extend(file_chunks)
-            included.append({"path": relative, "bundle_path": "files/" + relative,
-                             "sha256": _hash(raw), "bytes": len(raw), "lines": len(content.splitlines()),
-                             "chunks": [c["chunk_id"] for c in file_chunks]})
+            included.append(
+                {
+                    "path": relative,
+                    "bundle_path": "files/" + relative,
+                    "sha256": _hash(raw),
+                    "bytes": len(raw),
+                    "lines": len(content.splitlines()),
+                    "chunks": [c["chunk_id"] for c in file_chunks],
+                }
+            )
             if path.suffix == ".py":
                 try:
                     tree = ast.parse(content)
                     dependencies[relative] = _imports(tree)
                     python_symbols[relative] = [
                         {"name": n.name, "line": n.lineno, "kind": type(n).__name__}
-                        for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+                        for n in tree.body
+                        if isinstance(
+                            n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+                        )
                     ]
                 except (SyntaxError, ValueError):
                     dependencies[relative] = {"status": "parse_failed"}
             if name in {"pyproject.toml", "Cargo.toml"}:
                 try:
                     parsed = tomllib.loads(content)
-                    dependencies[relative] = {k: parsed[k] for k in ("project", "dependencies", "dev-dependencies", "workspace") if k in parsed}
+                    dependencies[relative] = {
+                        k: parsed[k]
+                        for k in (
+                            "project",
+                            "dependencies",
+                            "dev-dependencies",
+                            "workspace",
+                        )
+                        if k in parsed
+                    }
                 except tomllib.TOMLDecodeError:
                     dependencies[relative] = {"status": "parse_failed"}
     # Remove only files previously owned by this generated bundle, never source files.
@@ -251,9 +375,15 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
     for item in previous.get("files", []):
         relative = item.get("path", "")
         candidate = output / "files" / relative
-        if (relative and relative not in kept and not Path(relative).is_absolute()
-                and ".." not in Path(relative).parts and not candidate.is_symlink()
-                and candidate.resolve().is_relative_to(output / "files") and candidate.is_file()):
+        if (
+            relative
+            and relative not in kept
+            and not Path(relative).is_absolute()
+            and ".." not in Path(relative).parts
+            and not candidate.is_symlink()
+            and candidate.resolve().is_relative_to(output / "files")
+            and candidate.is_file()
+        ):
             candidate.unlink()
     head_sha = _git(root, "rev-parse", "HEAD") or None
     history = _git(root, "log", "-15", "--format=%h %s")
@@ -261,25 +391,43 @@ def prepare_bundle(repository_path: Path, output: Path, *, repository: str = "",
     if secret_reason(history):
         history = "[History omitted: possible secret detected]"
     manifest = {
-        "schema_version": 1, "repository": repository, "commit_sha": head_sha,
-        "files": included, "excluded": excluded, "chunk_count": len(chunks),
+        "schema_version": 1,
+        "repository": repository,
+        "commit_sha": head_sha,
+        "files": included,
+        "excluded": excluded,
+        "chunk_count": len(chunks),
         "content_hash": _hash(json.dumps([(f["path"], f["sha256"]) for f in included])),
-        "limitations": ["Static import/symbol map, not a resolved call graph",
-                         "Secret screen is heuristic; review bundle before uploading",
-                         "Excluded directory entries cover their entire subtree"],
+        "limitations": [
+            "Static import/symbol map, not a resolved call graph",
+            "Secret screen is heuristic; review bundle before uploading",
+            "Excluded directory entries cover their entire subtree",
+        ],
     }
-    map_lines = [f"# Repository map: {repository or root.name}", "",
-                 f"Commit: `{head_sha or 'unknown (not a Git checkout)'}`", "",
-                 "Static file/import inventory; no repository code was executed.", "", "## Files", ""]
+    map_lines = [
+        f"# Repository map: {repository or root.name}",
+        "",
+        f"Commit: `{head_sha or 'unknown (not a Git checkout)'}`",
+        "",
+        "Static file/import inventory; no repository code was executed.",
+        "",
+        "## Files",
+        "",
+    ]
     for item in included:
         map_lines.append(f"- `{item['path']}` — {item['lines']} lines")
     map_lines += ["", "## Python entry points and definitions", ""]
     for path, symbols in python_symbols.items():
         for symbol in symbols:
-            map_lines.append(f"- `{path}:{symbol['line']}` — {symbol['kind']} `{symbol['name']}`")
+            map_lines.append(
+                f"- `{path}:{symbol['line']}` — {symbol['kind']} `{symbol['name']}`"
+            )
     _json(output / "manifest.json", manifest)
     _json(output / "chunks.json", chunks)
     _json(output / "dependency_summary.json", dependencies)
     _write(output / "repo_map.md", "\n".join(map_lines) + "\n")
-    _write(output / "recent_history.md", "# Recent Git history\n\n" + (history or "Unavailable") + "\n")
+    _write(
+        output / "recent_history.md",
+        "# Recent Git history\n\n" + (history or "Unavailable") + "\n",
+    )
     return manifest

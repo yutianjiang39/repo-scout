@@ -1,4 +1,5 @@
 """Independent regression tests for evidence, isolation and authorization gates."""
+
 from __future__ import annotations
 
 import json
@@ -13,7 +14,11 @@ from unittest.mock import patch
 from repo_scout.common import digest, now
 from repo_scout.database import ConflictError, Store
 from repo_scout.implementation import create_worktree, git, head, run_command, snapshot
-from repo_scout.validation import _apply_assessment as accept_validation, import_cc_report, make_cc_packet
+from repo_scout.validation import (
+    _apply_assessment as accept_validation,
+    import_cc_report,
+    make_cc_packet,
+)
 
 
 class DatabaseEdges(unittest.TestCase):
@@ -28,10 +33,22 @@ class DatabaseEdges(unittest.TestCase):
 
     def test_compare_and_swap_preserves_winner_and_history(self):
         first = self.store.put("finding", "F-1", {"status": "CANDIDATE"})
-        self.store.put("finding", "F-1", {"status": "CC_VALIDATING"}, expected_version=first["_version"])
+        self.store.put(
+            "finding",
+            "F-1",
+            {"status": "CC_VALIDATING"},
+            expected_version=first["_version"],
+        )
         with self.assertRaises(ConflictError):
-            self.store.put("finding", "F-1", {"status": "CONFIRMED"}, expected_version=first["_version"])
-        self.assertEqual(self.store.require("finding", "F-1")["status"], "CC_VALIDATING")
+            self.store.put(
+                "finding",
+                "F-1",
+                {"status": "CONFIRMED"},
+                expected_version=first["_version"],
+            )
+        self.assertEqual(
+            self.store.require("finding", "F-1")["status"], "CC_VALIDATING"
+        )
         self.assertEqual(len(self.store.events("finding", "F-1")), 2)
 
     def test_failed_transaction_rolls_back_record_and_event_together(self):
@@ -52,18 +69,37 @@ class DatabaseEdges(unittest.TestCase):
 
     def test_approval_matches_content_and_is_single_use(self):
         content = digest({"body": "Reviewed final PR content", "head": "a" * 40})
-        approval = self.store.approve("submit", "F-4", content, actor="operator", reason="Reviewed this exact diff")
+        approval = self.store.approve(
+            "submit",
+            "F-4",
+            content,
+            actor="operator",
+            reason="Reviewed this exact diff",
+        )
         with self.assertRaises(ValueError):
-            self.store.check_approval("submit", "F-4", digest({"body": "Different PR content"}))
-        self.assertEqual(self.store.check_approval("submit", "F-4", content)["id"], approval["id"])
+            self.store.check_approval(
+                "submit", "F-4", digest({"body": "Different PR content"})
+            )
+        self.assertEqual(
+            self.store.check_approval("submit", "F-4", content)["id"], approval["id"]
+        )
         consumed = self.store.check_approval("submit", "F-4", content, consume=True)
         self.assertIsNotNone(consumed["consumed_at"])
         with self.assertRaises(ValueError):
             self.store.check_approval("submit", "F-4", content, consume=True)
 
     def test_expired_approval_is_rejected(self):
-        approval = self.store.approve("implementation", "F-5", "digest", actor="operator", reason="Reviewed change")
-        self.store.connection.execute("UPDATE approvals SET expires_at=? WHERE id=?", ("2000-01-01T00:00:00+00:00", approval["id"]))
+        approval = self.store.approve(
+            "implementation",
+            "F-5",
+            "digest",
+            actor="operator",
+            reason="Reviewed change",
+        )
+        self.store.connection.execute(
+            "UPDATE approvals SET expires_at=? WHERE id=?",
+            ("2000-01-01T00:00:00+00:00", approval["id"]),
+        )
         with self.assertRaises(ValueError):
             self.store.check_approval("implementation", "F-5", "digest")
 
@@ -83,20 +119,36 @@ class WorktreeEvidenceEdges(unittest.TestCase):
         git(self.original, "init", "-q")
         git(self.original, "config", "user.name", "Local Test")
         git(self.original, "config", "user.email", "test@example.invalid")
-        (self.original / "module.py").write_text("def increment(value):\n    return value + 2\n", encoding="utf-8")
+        (self.original / "module.py").write_text(
+            "def increment(value):\n    return value + 2\n", encoding="utf-8"
+        )
         git(self.original, "add", "module.py")
         git(self.original, "commit", "-qm", "fixture")
         self.sha = head(self.original)
         self.store = Store(self.root / "data.db")
-        self.validation_workspace, _ = create_worktree(self.root, self.original, "F-EDGE", self.sha, validation=True)
-        self.workspace, self.branch = create_worktree(self.root, self.original, "F-EDGE", self.sha)
+        self.validation_workspace, _ = create_worktree(
+            self.root, self.original, "F-EDGE", self.sha, validation=True
+        )
+        self.workspace, self.branch = create_worktree(
+            self.root, self.original, "F-EDGE", self.sha
+        )
         self.finding = {
-            "finding_id": "F-EDGE", "repository": "upstream/tool", "title": "Increment result is too high",
-            "category": "correctness", "evidence_status": "INFERRED", "base_sha": self.sha,
-            "status": "CC_VALIDATING", "validation_workspace": str(self.validation_workspace),
-            "workspace": str(self.workspace), "provenance": "demo",
-            "preflight": {"source": "github_api", "head_sha": self.sha, "checked_at": now(),
-                          "duplicates": {"complete": True, "issues": [], "prs": []}},
+            "finding_id": "F-EDGE",
+            "repository": "upstream/tool",
+            "title": "Increment result is too high",
+            "category": "correctness",
+            "evidence_status": "INFERRED",
+            "base_sha": self.sha,
+            "status": "CC_VALIDATING",
+            "validation_workspace": str(self.validation_workspace),
+            "workspace": str(self.workspace),
+            "provenance": "demo",
+            "preflight": {
+                "source": "github_api",
+                "head_sha": self.sha,
+                "checked_at": now(),
+                "duplicates": {"complete": True, "issues": [], "prs": []},
+            },
         }
         self.store.put("finding", "F-EDGE", self.finding)
 
@@ -106,28 +158,49 @@ class WorktreeEvidenceEdges(unittest.TestCase):
 
     def run_fixture(self, code: str, *, purpose="baseline", extra_argv=None):
         return run_command(
-            self.store, self.root, self.finding, [sys.executable, "-c", code, *(extra_argv or [])],
-            purpose=purpose, reviewed=True, runner="host", allow_host=True, timeout=10,
+            self.store,
+            self.root,
+            self.finding,
+            [sys.executable, "-c", code, *(extra_argv or [])],
+            purpose=purpose,
+            reviewed=True,
+            runner="host",
+            allow_host=True,
+            timeout=10,
         )
 
     def report(self, run):
         return {
-            "finding_id": "F-EDGE", "session_id": "fixture-independent-cc", "source_sha": self.sha,
-            "result": "CONFIRMED", "root_cause": "Increment adds two instead of one.",
-            "evidence": ["module.py:2"], "trigger_condition": "Any integer input",
-            "actual_behavior": "Input zero yields two", "expected_behavior": "Input zero yields one",
-            "protection_analysis": "No caller normalization", "design_compatibility": "API promises increment",
-            "duplicate_assessment": "Reviewed mock search", "already_fixed_assessment": "Current fixture reproduces",
-            "recommended_action": "PR", "impact": "Incorrect result", "regression_risk": "Small pure-function fix",
-            "baseline_run_id": run["run_id"], "failure_signature": "AssertionError: increment mismatch",
+            "finding_id": "F-EDGE",
+            "session_id": "fixture-independent-cc",
+            "source_sha": self.sha,
+            "result": "CONFIRMED",
+            "root_cause": "Increment adds two instead of one.",
+            "evidence": ["module.py:2"],
+            "trigger_condition": "Any integer input",
+            "actual_behavior": "Input zero yields two",
+            "expected_behavior": "Input zero yields one",
+            "protection_analysis": "No caller normalization",
+            "design_compatibility": "API promises increment",
+            "duplicate_assessment": "Reviewed mock search",
+            "already_fixed_assessment": "Current fixture reproduces",
+            "recommended_action": "PR",
+            "impact": "Incorrect result",
+            "regression_risk": "Small pure-function fix",
+            "baseline_run_id": run["run_id"],
+            "failure_signature": "AssertionError: increment mismatch",
             "reproducible": True,
         }
 
     def test_worktree_edits_do_not_touch_original_or_other_finding(self):
-        other, other_branch = create_worktree(self.root, self.original, "F-OTHER", self.sha)
-        (self.workspace / "module.py").write_text("def increment(value):\n    return value + 1\n")
-        self.assertIn("value + 2", (self.original / "module.py").read_text())
-        self.assertIn("value + 2", (other / "module.py").read_text())
+        other, other_branch = create_worktree(
+            self.root, self.original, "F-OTHER", self.sha
+        )
+        (self.workspace / "module.py").write_text(
+            "def increment(value):\n    return value + 1\n"
+        )
+        self.assertIn("value + 2", (self.original / "module.py").read_text(encoding="utf-8"))
+        self.assertIn("value + 2", (other / "module.py").read_text(encoding="utf-8"))
         self.assertNotEqual(self.branch, other_branch)
         self.assertEqual(git(self.original, "status", "--porcelain"), "")
 
@@ -155,102 +228,203 @@ class WorktreeEvidenceEdges(unittest.TestCase):
     def test_preflight_worktree_can_advance_without_overwriting_old_evidence(self):
         note = self.validation_workspace / "investigation.txt"
         note.write_text("Evidence retained at previous upstream commit")
-        (self.original / "module.py").write_text("def increment(value):\n    return value + 1\n")
+        (self.original / "module.py").write_text(
+            "def increment(value):\n    return value + 1\n"
+        )
         git(self.original, "add", "module.py")
         git(self.original, "commit", "-qm", "upstream advances")
         newer_sha = head(self.original)
-        newer, _ = create_worktree(self.root, self.original, "F-EDGE", newer_sha, validation=True)
+        newer, _ = create_worktree(
+            self.root, self.original, "F-EDGE", newer_sha, validation=True
+        )
         self.assertEqual(head(newer), newer_sha)
         self.assertNotEqual(newer, self.validation_workspace)
-        self.assertEqual(note.read_text(), "Evidence retained at previous upstream commit")
+        self.assertEqual(
+            note.read_text(encoding="utf-8"), "Evidence retained at previous upstream commit"
+        )
 
     def test_review_and_host_opt_in_are_required_before_execution(self):
         command = [sys.executable, "-c", "raise SystemExit(0)"]
         with self.assertRaises(ValueError):
-            run_command(self.store, self.root, self.finding, command, purpose="baseline", reviewed=False, runner="host", allow_host=True)
+            run_command(
+                self.store,
+                self.root,
+                self.finding,
+                command,
+                purpose="baseline",
+                reviewed=False,
+                runner="host",
+                allow_host=True,
+            )
         with self.assertRaises(ValueError):
-            run_command(self.store, self.root, self.finding, command, purpose="baseline", reviewed=True, runner="host", allow_host=False)
+            run_command(
+                self.store,
+                self.root,
+                self.finding,
+                command,
+                purpose="baseline",
+                reviewed=True,
+                runner="host",
+                allow_host=False,
+            )
         self.assertEqual(self.store.list("test_run"), [])
 
     def test_child_does_not_receive_parent_api_credentials(self):
-        with patch.dict(os.environ, {"OPENAI_API_KEY": "test-secret-openai-value", "GITHUB_TOKEN": "test-secret-github-value"}):
-            run = self.run_fixture("import os; assert 'OPENAI_API_KEY' not in os.environ; assert 'GITHUB_TOKEN' not in os.environ; print('credentials absent')")
+        with patch.dict(
+            os.environ,
+            {
+                "OPENAI_API_KEY": "test-secret-openai-value",
+                "GITHUB_TOKEN": "test-secret-github-value",
+            },
+        ):
+            run = self.run_fixture(
+                "import os; assert 'OPENAI_API_KEY' not in os.environ; assert 'GITHUB_TOKEN' not in os.environ; print('credentials absent')"
+            )
         self.assertEqual(run["status"], "PASS")
-        self.assertIn("credentials absent", Path(run["log_path"]).read_text())
-        self.assertNotIn("test-secret", Path(run["log_path"]).read_text())
+        self.assertIn("credentials absent", Path(run["log_path"]).read_text(encoding="utf-8"))
+        self.assertNotIn("test-secret", Path(run["log_path"]).read_text(encoding="utf-8"))
 
     def test_command_and_output_do_not_persist_known_credentials(self):
         secret = "test-only-sensitive-api-credential-12345"
         with patch.dict(os.environ, {"OPENAI_API_KEY": secret}):
-            run = self.run_fixture("import sys; print(sys.argv[1])", extra_argv=[secret])
-        self.assertNotIn(secret, Path(run["log_path"]).read_text())
-        self.assertNotIn(secret, json.dumps(self.store.require("test_run", run["run_id"])))
-        self.assertNotIn(secret, (Path(run["log_path"]).parent / "run.json").read_text())
+            run = self.run_fixture(
+                "import sys; print(sys.argv[1])", extra_argv=[secret]
+            )
+        self.assertNotIn(secret, Path(run["log_path"]).read_text(encoding="utf-8"))
+        self.assertNotIn(
+            secret, json.dumps(self.store.require("test_run", run["run_id"]))
+        )
+        self.assertNotIn(
+            secret, (Path(run["log_path"]).parent / "run.json").read_text(encoding="utf-8")
+        )
 
     def test_failure_is_recorded_as_failure_and_validates_only_actual_log(self):
-        run = self.run_fixture("from module import increment; assert increment(0) == 1, 'increment mismatch'")
+        run = self.run_fixture(
+            "from module import increment; assert increment(0) == 1, 'increment mismatch'"
+        )
         self.assertEqual(run["status"], "FAIL")
         self.assertNotEqual(run["return_code"], 0)
         self.assertTrue(run["source_unchanged"])
-        saved = accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
-        self.assertEqual(saved["status"], "CC_VALIDATING")  # evidence alone does not pass dual review
+        saved = accept_validation(
+            self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+        )
+        self.assertEqual(
+            saved["status"], "CC_VALIDATING"
+        )  # evidence alone does not pass dual review
 
     def test_passing_command_cannot_be_claimed_as_reproduction(self):
         run = self.run_fixture("print('AssertionError: increment mismatch')")
         self.assertEqual(run["status"], "PASS")
         with self.assertRaises(ValueError):
-            accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+            accept_validation(
+                self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+            )
 
     def test_blind_is_independent_and_comparison_bound_to_saved_report(self):
-        args = self.store, self.root, 'F-EDGE'
-        self.store.put('finding', 'F-EDGE', {**self.finding, 'file_path':'module.py', 'line_start':2,'line_end':2,
-                       'proposed_fix':'FIX-CANARY','actual_behavior':'CLAIM-CANARY','assessments':['ASSESSMENT-CANARY']})
+        args = self.store, self.root, "F-EDGE"
+        self.store.put(
+            "finding",
+            "F-EDGE",
+            {
+                **self.finding,
+                "file_path": "module.py",
+                "line_start": 2,
+                "line_end": 2,
+                "proposed_fix": "FIX-CANARY",
+                "actual_behavior": "CLAIM-CANARY",
+                "assessments": ["ASSESSMENT-CANARY"],
+            },
+        )
         run = self.run_fixture("raise AssertionError('increment mismatch')")
         with self.assertRaises(ValueError):
             make_cc_packet(*args, comparison=True)
         packet = make_cc_packet(*args)
-        prompt = Path(packet['prompt_path']).read_text('utf-8')
-        for text in (self.finding['title'], 'FIX-CANARY', 'CLAIM-CANARY','ASSESSMENT-CANARY'):
+        prompt = Path(packet["prompt_path"]).read_text("utf-8")
+        for text in (
+            self.finding["title"],
+            "FIX-CANARY",
+            "CLAIM-CANARY",
+            "ASSESSMENT-CANARY",
+        ):
             self.assertNotIn(text, prompt)
-        report = dict(context_hash=packet['context_hash'], source_sha=self.sha, validator_model='fixture', validator_cli_version='fixture',
-                      result='SUPPORTED',source_facts=['module.py:2'],reproduced=[], hypotheses=[],missing_evidence=[])
+        report = dict(
+            context_hash=packet["context_hash"],
+            source_sha=self.sha,
+            validator_model="fixture",
+            validator_cli_version="fixture",
+            result="SUPPORTED",
+            source_facts=["module.py:2"],
+            reproduced=[],
+            hypotheses=[],
+            missing_evidence=[],
+        )
         first = import_cc_report(*args, report, attested_cc=True)
         packet = make_cc_packet(*args, comparison=True)
-        comparison = dict(context_hash=packet['context_hash'], blind_report_hash=first['blind_report_hash'], validator_model='fixture',
-                          validator_cli_version='fixture', evidence_comparison='different observations', disagreements=['guard omitted'],missing_evidence=[],assessment=self.report(run))
-        second = import_cc_report(*args, dict(report, result='UNVERIFIED'), attested_cc=True)
+        comparison = dict(
+            context_hash=packet["context_hash"],
+            blind_report_hash=first["blind_report_hash"],
+            validator_model="fixture",
+            validator_cli_version="fixture",
+            evidence_comparison="different observations",
+            disagreements=["guard omitted"],
+            missing_evidence=[],
+            assessment=self.report(run),
+        )
+        second = import_cc_report(
+            *args, dict(report, result="UNVERIFIED"), attested_cc=True
+        )
         with self.assertRaises(ValueError):
             import_cc_report(*args, comparison, comparison=True, attested_cc=True)
-        comparison.update(context_hash=make_cc_packet(*args, comparison=True)['context_hash'], blind_report_hash=second['blind_report_hash'])
+        comparison.update(
+            context_hash=make_cc_packet(*args, comparison=True)["context_hash"],
+            blind_report_hash=second["blind_report_hash"],
+        )
         result = import_cc_report(*args, comparison, comparison=True, attested_cc=True)
-        self.assertEqual(result['status'], 'UNVERIFIED')
-        self.assertEqual(self.store.require('cc_comparison','F-EDGE')['report']['disagreements'], ['guard omitted'])
+        self.assertEqual(result["status"], "UNVERIFIED")
+        self.assertEqual(
+            self.store.require("cc_comparison", "F-EDGE")["report"]["disagreements"],
+            ["guard omitted"],
+        )
 
     def test_incomplete_duplicate_search_prevents_confirmation(self):
-        run = self.run_fixture("from module import increment; assert increment(0) == 1, 'increment mismatch'")
+        run = self.run_fixture(
+            "from module import increment; assert increment(0) == 1, 'increment mismatch'"
+        )
         finding = self.store.require("finding", "F-EDGE")
         finding["preflight"]["duplicates"]["complete"] = False
         self.store.put("finding", "F-EDGE", finding)
         with self.assertRaises(ValueError):
-            accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+            accept_validation(
+                self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+            )
 
     def test_modified_log_cannot_validate_a_bug(self):
         run = self.run_fixture("raise AssertionError('increment mismatch')")
-        Path(run["log_path"]).write_text("AssertionError: increment mismatch\nmodified after capture")
+        Path(run["log_path"]).write_text(
+            "AssertionError: increment mismatch\nmodified after capture"
+        )
         with self.assertRaises(ValueError):
-            accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+            accept_validation(
+                self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+            )
 
     def test_modified_baseline_source_is_rejected_before_execution(self):
-        (self.validation_workspace / "module.py").write_text("def increment(value):\n    return value + 1\n")
+        (self.validation_workspace / "module.py").write_text(
+            "def increment(value):\n    return value + 1\n"
+        )
         with self.assertRaises(ValueError):
             self.run_fixture("raise AssertionError('increment mismatch')")
         self.assertEqual(self.store.list("test_run"), [])
 
     def test_source_modified_during_execution_cannot_validate_a_bug(self):
-        run = self.run_fixture("from pathlib import Path; Path('module.py').write_text('changed'); raise AssertionError('increment mismatch')")
+        run = self.run_fixture(
+            "from pathlib import Path; Path('module.py').write_text('changed'); raise AssertionError('increment mismatch')"
+        )
         self.assertFalse(run["source_unchanged"])
         with self.assertRaises(ValueError):
-            accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+            accept_validation(
+                self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+            )
 
     def test_identical_bytes_new_commit_is_still_source_change(self):
         run = self.run_fixture(
@@ -261,7 +435,9 @@ class WorktreeEvidenceEdges(unittest.TestCase):
         self.assertNotEqual(head(self.validation_workspace), self.sha)
         self.assertFalse(run["source_unchanged"])
         with self.assertRaises(ValueError):
-            accept_validation(self.store, self.root, "F-EDGE", self.report(run), attested_cc=True)
+            accept_validation(
+                self.store, self.root, "F-EDGE", self.report(run), attested_cc=True
+            )
 
 
 if __name__ == "__main__":

@@ -18,159 +18,253 @@ class StrictGateTests(unittest.TestCase):
     def setUp(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
-        self.store = Store(Path(tmp.name)/'test.db')
+        self.store = Store(Path(tmp.name) / "test.db")
         self.addCleanup(self.store.close)
         self.fixture = FixtureCollector(self.store)
-        self.subject = 'example/profile'
-        self.args = self.store,self.subject,'profile'
-        self.store.put('profile_draft',self.subject,{'draft':{'base_sha':'a'*40,'content':'example'}})
+        self.subject = "example/profile"
+        self.args = self.store, self.subject, "profile"
+        self.store.put(
+            "profile_draft",
+            self.subject,
+            {"draft": {"base_sha": "a" * 40, "content": "example"}},
+        )
         self.rid = gate.start(*self.args)
 
-    def send(self,role,phase,verdict='PASS',disagreements=None):
-        r = self.fixture.report(self.subject,'profile',role,phase,verdict,disagreements)
-        gate.receive(*self.args,r)
+    def send(self, role, phase, verdict="PASS", disagreements=None):
+        r = self.fixture.report(
+            self.subject, "profile", role, phase, verdict, disagreements
+        )
+        gate.receive(*self.args, r)
         return r
 
     def independent(self):
         for role in gate.ROLES:
-            self.send(role,'independent')
+            self.send(role, "independent")
 
     def test_blind_packet_does_not_exchange_early_or_include_first_opinion(self):
-        self.send('reviewer_a','independent')
-        self.assertNotIn('simulated review',json.dumps(gate.packet(*self.args,'reviewer_b','independent')))
-        with self.assertRaises(ValueError): gate.packet(*self.args,'reviewer_b','final')
+        self.send("reviewer_a", "independent")
+        self.assertNotIn(
+            "simulated review",
+            json.dumps(gate.packet(*self.args, "reviewer_b", "independent")),
+        )
+        with self.assertRaises(ValueError):
+            gate.packet(*self.args, "reviewer_b", "final")
 
     def test_one_missing_final_in_either_direction_blocks(self):
         for who in gate.ROLES:
             gate.start(*self.args)
             self.independent()
-            self.send(who,'final')
-            with self.assertRaises(ValueError): gate.require(*self.args)
+            self.send(who, "final")
+            with self.assertRaises(ValueError):
+                gate.require(*self.args)
 
     def test_nonpass_and_unresolved_disagreement_block(self):
-        for verdict,issues in [('REJECT',[]),('REVISE',[]),('BLOCKED',[]),('PASS',['missing guard'])]:
+        for verdict, issues in [
+            ("REJECT", []),
+            ("REVISE", []),
+            ("BLOCKED", []),
+            ("PASS", ["missing guard"]),
+        ]:
             gate.start(*self.args)
             self.independent()
-            self.send('reviewer_a','final')
-            self.send('reviewer_b','final',verdict,issues)
-            self.send('reviewer_c','final')
-            with self.assertRaises(ValueError): gate.require(*self.args)
+            self.send("reviewer_a", "final")
+            self.send("reviewer_b", "final", verdict, issues)
+            self.send("reviewer_c", "final")
+            with self.assertRaises(ValueError):
+                gate.require(*self.args)
 
     def test_implementation_session_is_not_independent(self):
-        r = self.fixture.report(self.subject,'profile','reviewer_a','independent')
-        self.store.put('cc_session',r['decision']['session_id'],{'task':'implementation'})
-        with self.assertRaises(ValueError): gate.receive(*self.args,r)
+        r = self.fixture.report(self.subject, "profile", "reviewer_a", "independent")
+        self.store.put(
+            "cc_session", r["decision"]["session_id"], {"task": "implementation"}
+        )
+        with self.assertRaises(ValueError):
+            gate.receive(*self.args, r)
 
     def test_changed_binding_and_reused_session_block(self):
-        r = self.send('reviewer_a','independent')
-        with self.assertRaises(ValueError): gate.receive(*self.args,r)
-        r = self.fixture.report(self.subject,'profile','reviewer_b','independent')
-        r['binding']['artifact_digest']='b'*64
-        with self.assertRaises(ValueError): gate.receive(*self.args,r)
+        r = self.send("reviewer_a", "independent")
+        with self.assertRaises(ValueError):
+            gate.receive(*self.args, r)
+        r = self.fixture.report(self.subject, "profile", "reviewer_b", "independent")
+        r["binding"]["artifact_digest"] = "b" * 64
+        with self.assertRaises(ValueError):
+            gate.receive(*self.args, r)
 
     def test_submission_excludes_nested_implementer_and_registered_sessions(self):
-        artifact = {'repository':self.subject, 'source_commit_sha':'a'*40,
-                    'diff':{'implementer_session':'impl'}, 'evidence':{}}
-        with patch.object(gate, 'artifact', return_value=artifact):
-            gate.start(self.store,self.subject,'submission')
-            self.store.put('cc_session','registered',{'task':'validation'})
-            self.store.put('cc_session','gpt:prefixed',{'task':'validation'})
-            for session in ('impl','gpt:impl','gpt:registered','prefixed'):
-                report = self.fixture.report(self.subject,'submission','reviewer_a','independent')
-                report['decision']['session_id'] = session
-                with self.assertRaisesRegex(ValueError,'fresh independent'):
-                    gate.receive(self.store,self.subject,'submission',report)
+        artifact = {
+            "repository": self.subject,
+            "source_commit_sha": "a" * 40,
+            "diff": {"implementer_session": "impl"},
+            "evidence": {},
+        }
+        with patch.object(gate, "artifact", return_value=artifact):
+            gate.start(self.store, self.subject, "submission")
+            self.store.put("cc_session", "registered", {"task": "validation"})
+            self.store.put("cc_session", "gpt:prefixed", {"task": "validation"})
+            for session in ("impl", "gpt:impl", "gpt:registered", "prefixed"):
+                report = self.fixture.report(
+                    self.subject, "submission", "reviewer_a", "independent"
+                )
+                report["decision"]["session_id"] = session
+                with self.assertRaisesRegex(ValueError, "fresh independent"):
+                    gate.receive(self.store, self.subject, "submission", report)
 
     def test_active_plan_cannot_lose_its_finding_round_to_review_start(self):
-        self.store.put('finding',self.subject,{'status':'IMPLEMENTING'})
-        with self.assertRaisesRegex(ValueError,'re-enter validation'):
-            gate.start(self.store,self.subject,'finding')
-        self.assertEqual(self.store.connection.execute("SELECT count(*) FROM review_rounds WHERE kind='finding'").fetchone()[0],0)
+        self.store.put("finding", self.subject, {"status": "IMPLEMENTING"})
+        with self.assertRaisesRegex(ValueError, "re-enter validation"):
+            gate.start(self.store, self.subject, "finding")
+        self.assertEqual(
+            self.store.connection.execute(
+                "SELECT count(*) FROM review_rounds WHERE kind='finding'"
+            ).fetchone()[0],
+            0,
+        )
 
     def test_new_round_invalidates_old_pass_and_cannot_mix_finals(self):
-        self.independent(); self.send('reviewer_a','final'); old=self.send('reviewer_b','final')
-        self.send('reviewer_c','final')
+        self.independent()
+        self.send("reviewer_a", "final")
+        old = self.send("reviewer_b", "final")
+        self.send("reviewer_c", "final")
         self.assertTrue(gate.require(*self.args))
-        gate.start(*self.args); self.independent(); self.send('reviewer_a','final')
-        with self.assertRaises(ValueError): gate.receive(*self.args,old)
-        with self.assertRaises(ValueError): gate.require(*self.args)
+        gate.start(*self.args)
+        self.independent()
+        self.send("reviewer_a", "final")
+        with self.assertRaises(ValueError):
+            gate.receive(*self.args, old)
+        with self.assertRaises(ValueError):
+            gate.require(*self.args)
 
     def test_every_network_pair_can_pass_but_one_reviewer_never_can(self):
         for missing in gate.ROLES:
             gate.start(*self.args)
             pair = [r for r in gate.ROLES if r != missing]
-            for role in pair: self.send(role,'independent')
-            with self.assertRaises(ValueError): gate.packet(*self.args,pair[0],'final')
-            gate.network_failure(*self.args,missing,'timeout')
-            with self.assertRaises(ValueError): gate.network_failure(*self.args,pair[0],'dns')
-            self.send(pair[0],'final')
-            with self.assertRaises(ValueError): gate.require(*self.args)
-            self.send(pair[1],'final')
-            self.assertEqual(gate.status(*self.args)['status'],'PASSED')
-            with self.assertRaises(ValueError): gate.packet(*self.args,missing,'final')
+            for role in pair:
+                self.send(role, "independent")
+            with self.assertRaises(ValueError):
+                gate.packet(*self.args, pair[0], "final")
+            gate.network_failure(*self.args, missing, "timeout")
+            with self.assertRaises(ValueError):
+                gate.network_failure(*self.args, pair[0], "dns")
+            self.send(pair[0], "final")
+            with self.assertRaises(ValueError):
+                gate.require(*self.args)
+            self.send(pair[1], "final")
+            self.assertEqual(gate.status(*self.args)["status"], "PASSED")
+            with self.assertRaises(ValueError):
+                gate.packet(*self.args, missing, "final")
 
-    def test_network_loss_during_final_preserves_reports_and_cannot_hide_rejection(self):
+    def test_network_loss_during_final_preserves_reports_and_cannot_hide_rejection(
+        self,
+    ):
         self.independent()
-        self.send('reviewer_a','final'); self.send('reviewer_b','final')
-        with self.assertRaises(ValueError): gate.require(*self.args)
-        gate.network_failure(*self.args,'reviewer_c','connection-reset')
+        self.send("reviewer_a", "final")
+        self.send("reviewer_b", "final")
+        with self.assertRaises(ValueError):
+            gate.require(*self.args)
+        gate.network_failure(*self.args, "reviewer_c", "connection-reset")
         self.assertTrue(gate.require(*self.args))
         gate.start(*self.args)
-        self.send('reviewer_c','independent','REVISE')
-        with self.assertRaises(ValueError): gate.network_failure(*self.args,'reviewer_c','timeout')
+        self.send("reviewer_c", "independent", "REVISE")
+        with self.assertRaises(ValueError):
+            gate.network_failure(*self.args, "reviewer_c", "timeout")
 
     def test_gemini_collector_uses_chat_completions_and_records_real_response_id(self):
         def respond(request):
-            self.assertEqual(request.url.path,'/v1/chat/completions')
-            self.assertEqual(json.loads(request.content)['model'],'gemini-4-neon')
-            self.assertEqual(request.headers['Authorization'],'Bearer test-only')
-            decision = {'verdict':'PASS','disagreements':[],'rationale':'checked','evidence':[{'kind':'SOURCE_CONFIRMED','reference':'draft content'}]}
-            return httpx.Response(200,json={'id':'msg123','model':'gemini-4-neon','choices':[{'finish_reason':'stop','message':{'content':json.dumps(decision)}}]})
-        with patch.dict(os.environ,REPO_SCOUT_GEMINI_API_KEY='test-only'):
-            asyncio.run(gate.collect_gemini(*self.args,'independent',transport=httpx.MockTransport(respond)))
-        report = gate.status(*self.args)['reports']['independent']['reviewer_c']
-        self.assertEqual(report['decision']['session_id'],'gemini-4-neon:msg123')
+            self.assertEqual(request.url.path, "/v1/chat/completions")
+            self.assertEqual(json.loads(request.content)["model"], "gemini-4-neon")
+            self.assertEqual(request.headers["Authorization"], "Bearer test-only")
+            decision = {
+                "verdict": "PASS",
+                "disagreements": [],
+                "rationale": "checked",
+                "evidence": [
+                    {"kind": "SOURCE_CONFIRMED", "reference": "draft content"}
+                ],
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg123",
+                    "model": "gemini-4-neon",
+                    "choices": [
+                        {
+                            "finish_reason": "stop",
+                            "message": {"content": json.dumps(decision)},
+                        }
+                    ],
+                },
+            )
+
+        with patch.dict(os.environ, REPO_SCOUT_GEMINI_API_KEY="test-only"):
+            asyncio.run(
+                gate.collect_gemini(
+                    *self.args, "independent", transport=httpx.MockTransport(respond)
+                )
+            )
+        report = gate.status(*self.args)["reports"]["independent"]["reviewer_c"]
+        self.assertEqual(report["decision"]["session_id"], "gemini-4-neon:msg123")
 
     def test_provider_prefix_does_not_create_a_new_session(self):
-        for first, second in [('raw1','gpt:raw1'),('gpt:raw2','raw2')]:
+        for first, second in [("raw1", "gpt:raw1"), ("gpt:raw2", "raw2")]:
             gate.start(*self.args)
-            for index, session in enumerate((first,second)):
-                role = 'reviewer_a'
+            for index, session in enumerate((first, second)):
+                role = "reviewer_a"
                 if index:
                     gate.start(*self.args)
-                report = self.fixture.report(self.subject,'profile',role,'independent')
-                report['decision']['session_id'] = session
+                report = self.fixture.report(
+                    self.subject, "profile", role, "independent"
+                )
+                report["decision"]["session_id"] = session
                 if index == 0:
-                    gate.receive(*self.args,report)
+                    gate.receive(*self.args, report)
                 else:
-                    with self.assertRaisesRegex(ValueError,'session already used'):
-                        gate.receive(*self.args,report)
+                    with self.assertRaisesRegex(ValueError, "session already used"):
+                        gate.receive(*self.args, report)
 
     def test_sha_or_content_changed_blocks_and_history_is_immutable(self):
-        self.fixture.review(self.subject,'profile')
-        for key in ('base_sha','content'):
-            draft={'base_sha':'a'*40,'content':'example',key:'changed'}
-            self.store.put('profile_draft',self.subject,{'draft':draft})
-            with self.assertRaises(ValueError): gate.require(*self.args)
-        for table in ('review_rounds','review_receipts'):
-            with self.assertRaises(sqlite3.IntegrityError): self.store.connection.execute(f'DELETE FROM {table}')
+        self.fixture.review(self.subject, "profile")
+        for key in ("base_sha", "content"):
+            draft = {"base_sha": "a" * 40, "content": "example", key: "changed"}
+            self.store.put("profile_draft", self.subject, {"draft": draft})
+            with self.assertRaises(ValueError):
+                gate.require(*self.args)
+        for table in ("review_rounds", "review_receipts"):
+            with self.assertRaises(sqlite3.IntegrityError):
+                self.store.connection.execute(f"DELETE FROM {table}")
 
     def test_preview_is_not_approval_and_stale_confirmation_is_rejected(self):
-        args = self.store,'submission',self.subject
-        payload = {'content':'draft'}
-        preview = gate.human_gate(*args,payload,'operator','checked')
-        with self.assertRaises(ValueError): gate.authorized(*args,payload)
+        args = self.store, "submission", self.subject
+        payload = {"content": "draft"}
+        preview = gate.human_gate(*args, payload, "operator", "checked")
         with self.assertRaises(ValueError):
-            gate.human_gate(*args,{'content':'edited'},'operator','checked',preview['approval_digest'])
-        gate.human_gate(*args,payload,'operator','checked',preview['approval_digest'])
-        gate.authorized(*args,payload,consume=True)
-        with self.assertRaises(ValueError): gate.authorized(*args,payload,consume=True)
+            gate.authorized(*args, payload)
+        with self.assertRaises(ValueError):
+            gate.human_gate(
+                *args,
+                {"content": "edited"},
+                "operator",
+                "checked",
+                preview["approval_digest"],
+            )
+        gate.human_gate(
+            *args, payload, "operator", "checked", preview["approval_digest"]
+        )
+        gate.authorized(*args, payload, consume=True)
+        with self.assertRaises(ValueError):
+            gate.authorized(*args, payload, consume=True)
 
     def test_temporary_v1_copy_migrates_without_promoting_old_records(self):
         with tempfile.TemporaryDirectory() as tmp:
-            db = Path(tmp)/'legacy.db'
+            db = Path(tmp) / "legacy.db"
             with closing(sqlite3.connect(db)) as c:
-                c.executescript("CREATE TABLE schema_version(version INTEGER); INSERT INTO schema_version VALUES(1); CREATE TABLE records(kind TEXT,id TEXT,version INTEGER,status TEXT,data TEXT,updated_at TEXT,PRIMARY KEY(kind,id)); INSERT INTO records VALUES('finding','old',7,'CONFIRMED','{\"status\":\"CONFIRMED\"}','old');")
+                c.executescript(
+                    "CREATE TABLE schema_version(version INTEGER); INSERT INTO schema_version VALUES(1); CREATE TABLE records(kind TEXT,id TEXT,version INTEGER,status TEXT,data TEXT,updated_at TEXT,PRIMARY KEY(kind,id)); INSERT INTO records VALUES('finding','old',7,'CONFIRMED','{\"status\":\"CONFIRMED\"}','old');"
+                )
             with Store(db) as s:
-                self.assertEqual(s.require('finding','old')['_version'],7)
-                self.assertEqual(s.connection.execute('SELECT count(*) FROM review_rounds').fetchone()[0],0)
+                self.assertEqual(s.require("finding", "old")["_version"], 7)
+                self.assertEqual(
+                    s.connection.execute(
+                        "SELECT count(*) FROM review_rounds"
+                    ).fetchone()[0],
+                    0,
+                )

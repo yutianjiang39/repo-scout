@@ -16,30 +16,66 @@ from repo_scout.audit import audit_bundle, parse_findings
 from repo_scout.bundle import chunk_source, prepare_bundle, secret_reason
 from repo_scout.database import Store
 from repo_scout.providers import (
-    AnthropicProvider, BudgetExceeded, GeminiProvider, ModelRequest, ModelRunner,
-    OpenAICompatibleProvider, OpenAIProvider, ProviderError, ProviderRegistry,
+    AnthropicProvider,
+    BudgetExceeded,
+    GeminiProvider,
+    ModelRequest,
+    ModelRunner,
+    OpenAICompatibleProvider,
+    OpenAIProvider,
+    ProviderError,
+    ProviderRegistry,
 )
 
 
 def raw_finding(**changes):
-    return {"title": "Reconnect drops pending subscriptions", "category": "reliability",
-            "severity": "medium", "confidence": "MEDIUM", "file_path": "client.py",
-            "line_start": 1, "line_end": 2, "trigger_condition": "connection is lost",
-            "expected_behavior": "resubscribe", "actual_behavior": "subscription map cleared",
-            "impact": "market-data events stop", "proposed_fix": "preserve pending state",
-            "evidence": ["source clears the pending map"], "test_plan": ["simulate reconnect"], **changes}
+    return {
+        "title": "Reconnect drops pending subscriptions",
+        "category": "reliability",
+        "severity": "medium",
+        "confidence": "MEDIUM",
+        "file_path": "client.py",
+        "line_start": 1,
+        "line_end": 2,
+        "trigger_condition": "connection is lost",
+        "expected_behavior": "resubscribe",
+        "actual_behavior": "subscription map cleared",
+        "impact": "market-data events stop",
+        "proposed_fix": "preserve pending state",
+        "evidence": ["source clears the pending map"],
+        "test_plan": ["simulate reconnect"],
+        **changes,
+    }
 
 
 def openai_response(text='{"findings": []}', **changes):
-    return {"id": "resp_test", "status": "completed", "output": [
-        {"type": "message", "content": [{"type": "output_text", "text": text}]}],
-        "usage": {"input_tokens": 120, "output_tokens": 60}, **changes}
+    return {
+        "id": "resp_test",
+        "status": "completed",
+        "output": [
+            {"type": "message", "content": [{"type": "output_text", "text": text}]}
+        ],
+        "usage": {"input_tokens": 120, "output_tokens": 60},
+        **changes,
+    }
 
 
 def init_repo(path: Path):
-    for args in (["init", "-q", str(path)], ["-C", str(path), "add", "."],
-                 ["-C", str(path), "-c", "user.name=Local Test", "-c", "user.email=test@example.invalid",
-                  "commit", "-qm", "Local test fixture"]):
+    for args in (
+        ["init", "-q", str(path)],
+        ["-C", str(path), "add", "."],
+        [
+            "-C",
+            str(path),
+            "-c",
+            "user.name=Local Test",
+            "-c",
+            "user.email=test@example.invalid",
+            "commit",
+            "-qm",
+            "Local test fixture",
+        ],
+    ):
         subprocess.run(["git", *args], check=True, capture_output=True)
 
 
@@ -59,7 +95,9 @@ class BundleTests(unittest.TestCase):
         original = b"def reconnect():\n    return True\n"
         (self.repo / "src" / "client.py").write_bytes(original)
         (self.repo / ".env").write_text("TOKEN=private")
-        (self.repo / "credential.py").write_text('api_key = "abcdEFGH1234567890abcdEFGH"\n')
+        (self.repo / "credential.py").write_text(
+            'api_key = "abcdEFGH1234567890abcdEFGH"\n'
+        )
         (self.repo / "blob.dat").write_bytes(b"\x00\x01")
         (self.repo / "node_modules").mkdir()
         (self.repo / "node_modules" / "code.js").write_text("not sent")
@@ -68,18 +106,18 @@ class BundleTests(unittest.TestCase):
         try:
             (self.repo / "linked.txt").symlink_to(outside)
         except OSError as exc:
-            if getattr(exc, 'winerror', None) != 1314:
+            if getattr(exc, "winerror", None) != 1314:
                 raise
         result = prepare_bundle(self.repo, self.output, repository="upstream/client")
         self.assertEqual([item["path"] for item in result["files"]], ["src/client.py"])
         excluded = {item["path"]: item["reason"] for item in result["excluded"]}
         self.assertEqual(excluded["credential.py"], "possible_hardcoded_secret")
-        if (self.repo / 'linked.txt').is_symlink():
+        if (self.repo / "linked.txt").is_symlink():
             self.assertEqual(excluded["linked.txt"], "symlink")
         self.assertEqual((self.repo / "src/client.py").read_bytes(), original)
         self.assertEqual((self.output / "files/src/client.py").read_bytes(), original)
         self.assertTrue((self.repo / ".env").exists())
-        self.assertNotIn("abcdEFGH", (self.output / "manifest.json").read_text())
+        self.assertNotIn("abcdEFGH", (self.output / "manifest.json").read_text(encoding="utf-8"))
 
     def test_incremental_hash_and_secret_introduction_removes_old_copy(self):
         source = self.repo / "client.py"
@@ -97,20 +135,27 @@ class BundleTests(unittest.TestCase):
         self.assertTrue(source.exists())
 
     def test_private_configuration_never_enters_chunks(self):
-        token = 'ghp_' + 'z' * 36
-        names = ['.mcp.json','.cursor/config','.claude/settings','.env.local','.unknown/settings','ordinary.yaml']
+        token = "ghp_" + "z" * 36
+        names = [
+            ".mcp.json",
+            ".cursor/config",
+            ".claude/settings",
+            ".env.local",
+            ".unknown/settings",
+            "ordinary.yaml",
+        ]
         for name in names:
             path = self.repo / name
             path.parent.mkdir(exist_ok=True)
             path.write_text(token)
-        manifest = prepare_bundle(self.repo,self.output)
-        self.assertFalse(manifest['files'])
-        reasons = {x['path']:x['reason'] for x in manifest['excluded']}
-        self.assertEqual(reasons['.cursor/'], 'private_configuration')
-        self.assertEqual(reasons['.mcp.json'], 'sensitive_filename')
-        self.assertEqual(reasons['ordinary.yaml'], 'possible_hardcoded_secret')
-        self.assertNotIn(token,(self.output/'chunks.json').read_text())
-        self.assertTrue(all((self.repo/n).read_text()==token for n in names))
+        manifest = prepare_bundle(self.repo, self.output)
+        self.assertFalse(manifest["files"])
+        reasons = {x["path"]: x["reason"] for x in manifest["excluded"]}
+        self.assertEqual(reasons[".cursor/"], "private_configuration")
+        self.assertEqual(reasons[".mcp.json"], "sensitive_filename")
+        self.assertEqual(reasons["ordinary.yaml"], "possible_hardcoded_secret")
+        self.assertNotIn(token, (self.output / "chunks.json").read_text(encoding="utf-8"))
+        self.assertTrue(all((self.repo / n).read_text(encoding="utf-8") == token for n in names))
 
     def test_output_cannot_modify_original_or_follow_output_symlinks(self):
         (self.repo / "client.py").write_text("value = 1\n")
@@ -119,8 +164,8 @@ class BundleTests(unittest.TestCase):
         try:
             self.output.symlink_to(self.repo, target_is_directory=True)
         except OSError as exc:
-            if getattr(exc, 'winerror', None) == 1314:
-                self.skipTest('Windows account lacks symlink privilege')
+            if getattr(exc, "winerror", None) == 1314:
+                self.skipTest("Windows account lacks symlink privilege")
             raise
         with self.assertRaises(ValueError):
             prepare_bundle(self.repo, self.output)
@@ -131,7 +176,10 @@ class BundleTests(unittest.TestCase):
         lines = content.splitlines(keepends=True)
         self.assertEqual("".join(chunk["content"] for chunk in chunks), content)
         for chunk in chunks:
-            self.assertEqual(chunk["content"], "".join(lines[chunk["line_start"] - 1:chunk["line_end"]]))
+            self.assertEqual(
+                chunk["content"],
+                "".join(lines[chunk["line_start"] - 1 : chunk["line_end"]]),
+            )
             self.assertEqual(chunk["dependencies"], ["os"])
         first_fn = [chunk for chunk in chunks if "def first" in chunk["content"]][0]
         self.assertIn("@decorator", first_fn["content"])
@@ -156,7 +204,9 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         self.store = Store(Path(self.temp.name) / "test.db")
         self.env = patch.dict(os.environ, {"MOCK_MODEL_KEY": "unit-test-key"})
         self.env.start()
-        self.request = ModelRequest("mock-model", "Return JSON only", "audit source", max_output_tokens=100)
+        self.request = ModelRequest(
+            "mock-model", "Return JSON only", "audit source", max_output_tokens=100
+        )
 
     def tearDown(self):
         self.env.stop()
@@ -164,15 +214,28 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         self.temp.cleanup()
 
     def config(self, **changes):
-        return {"api_key_env": "MOCK_MODEL_KEY", "retry_base_seconds": 0, "retries": 2, **changes}
+        return {
+            "api_key_env": "MOCK_MODEL_KEY",
+            "retry_base_seconds": 0,
+            "retries": 2,
+            **changes,
+        }
 
     async def test_openai_payload_and_usage(self):
         requests = []
+
         def handler(request):
             requests.append(request)
             return httpx.Response(200, json=openai_response())
-        provider = OpenAIProvider(self.config(pricing={"mock-model": {"input_per_million": 2, "output_per_million": 6}}),
-                                  transport=httpx.MockTransport(handler))
+
+        provider = OpenAIProvider(
+            self.config(
+                pricing={
+                    "mock-model": {"input_per_million": 2, "output_per_million": 6}
+                }
+            ),
+            transport=httpx.MockTransport(handler),
+        )
         result = await provider.generate(self.request)
         body = json.loads(requests[0].content)
         self.assertEqual(requests[0].url.path, "/v1/responses")
@@ -184,12 +247,27 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_anthropic_has_independent_shape_and_cached_tokens(self):
         requests = []
+
         def handler(request):
             requests.append(request)
-            return httpx.Response(200, json={"id": "msg_test", "content": [{"type": "text", "text": "{}"}],
-                "stop_reason": "end_turn", "usage": {"input_tokens": 10, "output_tokens": 5,
-                                                        "cache_read_input_tokens": 20, "cache_creation_input_tokens": 30}})
-        result = await AnthropicProvider(self.config(), transport=httpx.MockTransport(handler)).generate(self.request)
+            return httpx.Response(
+                200,
+                json={
+                    "id": "msg_test",
+                    "content": [{"type": "text", "text": "{}"}],
+                    "stop_reason": "end_turn",
+                    "usage": {
+                        "input_tokens": 10,
+                        "output_tokens": 5,
+                        "cache_read_input_tokens": 20,
+                        "cache_creation_input_tokens": 30,
+                    },
+                },
+            )
+
+        result = await AnthropicProvider(
+            self.config(), transport=httpx.MockTransport(handler)
+        ).generate(self.request)
         body = json.loads(requests[0].content)
         self.assertEqual(requests[0].url.path, "/v1/messages")
         self.assertEqual(requests[0].headers["x-api-key"], "unit-test-key")
@@ -200,88 +278,149 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_gemini_shape_includes_thinking_usage_and_key_only_in_header(self):
         requests = []
+
         def handler(request):
             requests.append(request)
-            return httpx.Response(200, json={"candidates": [{"finishReason": "STOP", "content": {"parts": [{"text": "{}"}]}}],
-                "usageMetadata": {"promptTokenCount": 12, "candidatesTokenCount": 6, "thoughtsTokenCount": 9}})
-        result = await GeminiProvider(self.config(), transport=httpx.MockTransport(handler)).generate(self.request)
+            return httpx.Response(
+                200,
+                json={
+                    "candidates": [
+                        {"finishReason": "STOP", "content": {"parts": [{"text": "{}"}]}}
+                    ],
+                    "usageMetadata": {
+                        "promptTokenCount": 12,
+                        "candidatesTokenCount": 6,
+                        "thoughtsTokenCount": 9,
+                    },
+                },
+            )
+
+        result = await GeminiProvider(
+            self.config(), transport=httpx.MockTransport(handler)
+        ).generate(self.request)
         body = json.loads(requests[0].content)
-        self.assertEqual(requests[0].url.path, "/v1beta/models/mock-model:generateContent")
+        self.assertEqual(
+            requests[0].url.path, "/v1beta/models/mock-model:generateContent"
+        )
         self.assertEqual(requests[0].url.query, b"")
         self.assertEqual(requests[0].headers["x-goog-api-key"], "unit-test-key")
-        self.assertEqual(body["generationConfig"]["responseMimeType"], "application/json")
+        self.assertEqual(
+            body["generationConfig"]["responseMimeType"], "application/json"
+        )
         self.assertEqual(result.output_tokens, 15)
 
     async def test_compatible_chat_endpoint_is_separate(self):
         requests = []
+
         def handler(request):
             requests.append(request)
-            return httpx.Response(200, json={"choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
-                                             "usage": {"prompt_tokens": 3, "completion_tokens": 4}})
-        result = await OpenAICompatibleProvider(self.config(max_tokens_field="max_completion_tokens"),
-                                                transport=httpx.MockTransport(handler)).generate(self.request)
+            return httpx.Response(
+                200,
+                json={
+                    "choices": [
+                        {"message": {"content": "{}"}, "finish_reason": "stop"}
+                    ],
+                    "usage": {"prompt_tokens": 3, "completion_tokens": 4},
+                },
+            )
+
+        result = await OpenAICompatibleProvider(
+            self.config(max_tokens_field="max_completion_tokens"),
+            transport=httpx.MockTransport(handler),
+        ).generate(self.request)
         self.assertEqual(requests[0].url.path, "/v1/chat/completions")
         self.assertEqual(json.loads(requests[0].content)["max_completion_tokens"], 100)
         self.assertEqual(result.output_tokens, 4)
 
     async def test_rate_limit_retry_and_no_retry_for_authorization_failure(self):
         calls = 0
+
         def handler(request):
             nonlocal calls
             calls += 1
-            return httpx.Response(429, headers={"retry-after": "0"}) if calls == 1 else httpx.Response(200, json=openai_response())
-        result = await OpenAIProvider(self.config(), transport=httpx.MockTransport(handler)).generate(self.request)
+            return (
+                httpx.Response(429, headers={"retry-after": "0"})
+                if calls == 1
+                else httpx.Response(200, json=openai_response())
+            )
+
+        result = await OpenAIProvider(
+            self.config(), transport=httpx.MockTransport(handler)
+        ).generate(self.request)
         self.assertEqual(calls, 2)
         self.assertEqual(result.attempts, 2)
         calls = 0
+
         def denied(request):
             nonlocal calls
             calls += 1
             return httpx.Response(401, text="unit-test-key should not be logged")
+
         with self.assertRaises(ProviderError) as error:
-            await OpenAIProvider(self.config(), transport=httpx.MockTransport(denied)).generate(self.request)
+            await OpenAIProvider(
+                self.config(), transport=httpx.MockTransport(denied)
+            ).generate(self.request)
         self.assertEqual(calls, 1)
         self.assertNotIn("unit-test-key", str(error.exception))
 
     async def test_ambiguous_transport_is_not_replayed(self):
         calls = 0
+
         def handler(request):
             nonlocal calls
             calls += 1
             raise httpx.ReadTimeout("secret response", request=request)
+
         with self.assertRaises(ProviderError):
-            await OpenAIProvider(self.config(), transport=httpx.MockTransport(handler)).generate(self.request)
+            await OpenAIProvider(
+                self.config(), transport=httpx.MockTransport(handler)
+            ).generate(self.request)
         self.assertEqual(calls, 1)
 
     async def test_no_redirect_or_parameter_override(self):
         calls = []
+
         def handler(request):
             calls.append(request)
-            return httpx.Response(302, headers={"location": "https://evil.invalid/steal"})
+            return httpx.Response(
+                302, headers={"location": "https://evil.invalid/steal"}
+            )
+
         provider = OpenAIProvider(self.config(), transport=httpx.MockTransport(handler))
         with self.assertRaises(ProviderError):
             await provider.generate(self.request)
         self.assertEqual(len(calls), 1)
 
         with self.assertRaises(ProviderError):
-            await provider.generate(ModelRequest("mock-model", "JSON", "test", parameters={"tools": []}))
+            await provider.generate(
+                ModelRequest("mock-model", "JSON", "test", parameters={"tools": []})
+            )
         self.assertEqual(len(calls), 1)
 
     async def test_ambiguous_generation_blocks_after_restart(self):
-        for status in (500,502,503,504):
+        for status in (500, 502, 503, 504):
             calls = []
-            reg = ProviderRegistry({'p':{'type':'openai',**self.config()}},transport=httpx.MockTransport(lambda req: calls.append(req) or httpx.Response(status)))
-            for run_id in ('before','after'):
+            reg = ProviderRegistry(
+                {"p": {"type": "openai", **self.config()}},
+                transport=httpx.MockTransport(
+                    lambda req: calls.append(req) or httpx.Response(status)
+                ),
+            )
+            for run_id in ("before", "after"):
                 with self.assertRaises(ProviderError):
-                    await ModelRunner(reg,self.store,run_id=run_id).run('p',self.request,prompt_version=str(status))
-            self.assertEqual(len(calls),1)
+                    await ModelRunner(reg, self.store, run_id=run_id).run(
+                        "p", self.request, prompt_version=str(status)
+                    )
+            self.assertEqual(len(calls), 1)
 
     async def test_missing_credentials_and_unsafe_config_fail_before_network(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaises(ProviderError):
                 await OpenAIProvider(self.config()).generate(self.request)
         with self.assertRaises(ValueError):
-            OpenAIProvider(self.config(base_url="https://token@example.invalid/api?key=token"))
+            OpenAIProvider(
+                self.config(base_url="https://token@example.invalid/api?key=token")
+            )
         with self.assertRaises(ValueError):
             OpenAIProvider(self.config(api_key="literal"))
         with self.assertRaises(ProviderError):
@@ -289,37 +428,67 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_cache_full_parameters_version_and_concurrent_deduplication(self):
         calls = 0
+
         async def handler(request):
             nonlocal calls
             calls += 1
             await asyncio.sleep(0)
             return httpx.Response(200, json=openai_response())
-        registry = ProviderRegistry({"p": {"type": "openai", **self.config()}}, transport=httpx.MockTransport(handler))
+
+        registry = ProviderRegistry(
+            {"p": {"type": "openai", **self.config()}},
+            transport=httpx.MockTransport(handler),
+        )
         runner = ModelRunner(registry, self.store, run_id="run1")
-        results = await asyncio.gather(runner.run("p", self.request), runner.run("p", self.request))
+        results = await asyncio.gather(
+            runner.run("p", self.request), runner.run("p", self.request)
+        )
         self.assertEqual(calls, 1)
         self.assertEqual(sum(result.cached for result in results), 1)
         runner2 = ModelRunner(registry, self.store, run_id="run2")
         self.assertTrue((await runner2.run("p", self.request)).cached)
         await runner2.run("p", self.request, prompt_version="2")
-        await runner2.run("p", ModelRequest("mock-model", "Return JSON only", "audit source", 100, {"temperature": 0.2}))
+        await runner2.run(
+            "p",
+            ModelRequest(
+                "mock-model",
+                "Return JSON only",
+                "audit source",
+                100,
+                {"temperature": 0.2},
+            ),
+        )
         self.assertEqual(calls, 3)
         self.assertNotIn("unit-test-key", json.dumps(self.store.list("model_usage")))
 
     async def test_budget_blocks_unpriced_or_too_large_requests_before_network(self):
         calls = []
+
         def handler(request):
             calls.append(request)
             return httpx.Response(200, json=openai_response())
-        registry = ProviderRegistry({"p": {"type": "openai", **self.config()}}, transport=httpx.MockTransport(handler))
+
+        registry = ProviderRegistry(
+            {"p": {"type": "openai", **self.config()}},
+            transport=httpx.MockTransport(handler),
+        )
         with self.assertRaises(BudgetExceeded):
-            await ModelRunner(registry, self.store, input_budget=1).run("p", self.request)
+            await ModelRunner(registry, self.store, input_budget=1).run(
+                "p", self.request
+            )
         with self.assertRaises(BudgetExceeded):
-            await ModelRunner(registry, self.store, cost_budget_usd=1).run("p", self.request)
+            await ModelRunner(registry, self.store, cost_budget_usd=1).run(
+                "p", self.request
+            )
         self.assertEqual(calls, [])
 
     async def test_absent_usage_is_unknown_not_zero(self):
-        provider = OpenAIProvider(self.config(), transport=httpx.MockTransport(lambda r: httpx.Response(200, json=openai_response(usage=None))))
+        provider = OpenAIProvider(
+            self.config(),
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json=openai_response(usage=None))
+            ),
+        )
         response = await provider.generate(self.request)
         self.assertIsNone(response.input_tokens)
         self.assertIsNone(response.output_tokens)
@@ -327,8 +496,10 @@ class ProviderTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(response.cost_usd)
 
     async def test_failed_request_usage_persists_unknown_not_pass(self):
-        registry = ProviderRegistry({"p": {"type": "openai", **self.config()}},
-                                    transport=httpx.MockTransport(lambda r: httpx.Response(401)))
+        registry = ProviderRegistry(
+            {"p": {"type": "openai", **self.config()}},
+            transport=httpx.MockTransport(lambda r: httpx.Response(401)),
+        )
         runner = ModelRunner(registry, self.store, run_id="failed")
         with self.assertRaises(ProviderError):
             await runner.run("p", self.request)
@@ -344,26 +515,55 @@ class AuditTests(unittest.IsolatedAsyncioTestCase):
         self.base = Path(self.temp.name)
         self.repo = self.base / "repo"
         self.repo.mkdir()
-        (self.repo / "client.py").write_bytes(b"def reconnect():\r\n    pending.clear()\r\n    return True\r\n")
+        (self.repo / "client.py").write_bytes(
+            b"def reconnect():\r\n    pending.clear()\r\n    return True\r\n"
+        )
         init_repo(self.repo)
         self.bundle = self.base / "bundle"
-        self.manifest = prepare_bundle(self.repo, self.bundle, repository="upstream/client")
+        self.manifest = prepare_bundle(
+            self.repo, self.bundle, repository="upstream/client"
+        )
         self.store = Store(self.base / "db.sqlite")
         self.env = patch.dict(os.environ, {"MOCK_MODEL_KEY": "unit-test-key"})
         self.env.start()
-        self.config = {"providers": {"test": {"type": "openai", "api_key_env": "MOCK_MODEL_KEY", "retries": 0}},
-                       "roles": {"primary_auditor": {"provider": "test", "model": "mock-model"}}}
+        self.config = {
+            "providers": {
+                "test": {
+                    "type": "openai",
+                    "api_key_env": "MOCK_MODEL_KEY",
+                    "retries": 0,
+                }
+            },
+            "roles": {"primary_auditor": {"provider": "test", "model": "mock-model"}},
+        }
 
     def tearDown(self):
         self.env.stop()
         self.store.close()
         self.temp.cleanup()
 
-    async def test_malicious_confirmed_claim_remains_candidate_and_nonexistent_path_rejected(self):
-        payload = json.dumps({"findings": [raw_finding(status="CONFIRMED", evidence_status="CONFIRMED"),
-                                          raw_finding(file_path="does_not_exist.py"), raw_finding(line_end=999)]})
-        transport = httpx.MockTransport(lambda request: httpx.Response(200, json=openai_response(payload)))
-        run = await audit_bundle(self.bundle, self.config, self.store, output=self.base / "reports", transport=transport)
+    async def test_malicious_confirmed_claim_remains_candidate_and_nonexistent_path_rejected(
+        self,
+    ):
+        payload = json.dumps(
+            {
+                "findings": [
+                    raw_finding(status="CONFIRMED", evidence_status="CONFIRMED"),
+                    raw_finding(file_path="does_not_exist.py"),
+                    raw_finding(line_end=999),
+                ]
+            }
+        )
+        transport = httpx.MockTransport(
+            lambda request: httpx.Response(200, json=openai_response(payload))
+        )
+        run = await audit_bundle(
+            self.bundle,
+            self.config,
+            self.store,
+            output=self.base / "reports",
+            transport=transport,
+        )
         self.assertEqual(len(run["findings"]), 1)
         finding = run["findings"][0]
         self.assertEqual(finding["status"], "CANDIDATE")
@@ -375,27 +575,49 @@ class AuditTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_max_five_findings_even_if_config_asks_for_more(self):
         self.config["audit"] = {"max_findings": 1000}
-        payload = json.dumps({"findings": [raw_finding(title=f"Bug candidate number {i}") for i in range(8)]})
-        run = await audit_bundle(self.bundle, self.config, self.store,
-                                 transport=httpx.MockTransport(lambda r: httpx.Response(200, json=openai_response(payload))))
+        payload = json.dumps(
+            {
+                "findings": [
+                    raw_finding(title=f"Bug candidate number {i}") for i in range(8)
+                ]
+            }
+        )
+        run = await audit_bundle(
+            self.bundle,
+            self.config,
+            self.store,
+            transport=httpx.MockTransport(
+                lambda r: httpx.Response(200, json=openai_response(payload))
+            ),
+        )
         self.assertEqual(len(run["findings"]), 5)
         self.assertEqual(len(self.store.list("finding")), 5)
 
     async def test_resume_uses_cache_and_preserves_downstream_validation(self):
         calls = 0
+
         def handler(request):
             nonlocal calls
             calls += 1
-            return httpx.Response(200, json=openai_response(json.dumps({"findings": [raw_finding()]})))
+            return httpx.Response(
+                200, json=openai_response(json.dumps({"findings": [raw_finding()]}))
+            )
+
         transport = httpx.MockTransport(handler)
-        run = await audit_bundle(self.bundle, self.config, self.store, transport=transport)
+        run = await audit_bundle(
+            self.bundle, self.config, self.store, transport=transport
+        )
         finding = self.store.require("finding", run["findings"][0]["finding_id"])
         finding["status"] = "CONFIRMED"
         self.store.put("finding", finding["finding_id"], finding)
-        rerun = await audit_bundle(self.bundle, self.config, self.store, transport=transport)
+        rerun = await audit_bundle(
+            self.bundle, self.config, self.store, transport=transport
+        )
         self.assertEqual(calls, 1)
         self.assertTrue(rerun["usage"][0]["cached"])
-        self.assertEqual(self.store.require("finding", finding["finding_id"])["status"], "CONFIRMED")
+        self.assertEqual(
+            self.store.require("finding", finding["finding_id"])["status"], "CONFIRMED"
+        )
 
     async def test_changed_bundle_cannot_use_stale_locations(self):
         (self.bundle / "files/client.py").write_text("unreviewed source\n")
@@ -410,15 +632,31 @@ class AuditTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(run["verification"][0]["status"], "BUDGET_DEFERRED")
 
     async def test_adversarial_role_can_dispute_but_never_confirm(self):
-        self.config["roles"]["adversarial_reviewer"] = {"provider": "test", "model": "mock-model"}
+        self.config["roles"]["adversarial_reviewer"] = {
+            "provider": "test",
+            "model": "mock-model",
+        }
+
         def handler(request):
             prompt = json.loads(request.content)["input"]
-            payload = ({"verdict": "REFUTED", "reason": "Caller restores subscriptions", "evidence": []}
-                       if "Try to disprove" in prompt else {"findings": [raw_finding()]})
+            payload = (
+                {
+                    "verdict": "REFUTED",
+                    "reason": "Caller restores subscriptions",
+                    "evidence": [],
+                }
+                if "Try to disprove" in prompt
+                else {"findings": [raw_finding()]}
+            )
             return httpx.Response(200, json=openai_response(json.dumps(payload)))
-        run = await audit_bundle(self.bundle, self.config, self.store, transport=httpx.MockTransport(handler))
+
+        run = await audit_bundle(
+            self.bundle, self.config, self.store, transport=httpx.MockTransport(handler)
+        )
         self.assertEqual(run["findings"][0]["status"], "CANDIDATE")
-        self.assertEqual(run["findings"][0]["recommendation"], "DISCARD_OR_REINVESTIGATE")
+        self.assertEqual(
+            run["findings"][0]["recommendation"], "DISCARD_OR_REINVESTIGATE"
+        )
         self.assertEqual(len(run["findings"][0]["assessments"]), 2)
 
 

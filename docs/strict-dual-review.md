@@ -1,10 +1,95 @@
-# 本地三审与人工确认
+# 代码贡献审查与人工确认
 
-默认由 GPT (`reviewer_a`)、Claude Code (`reviewer_b`，`claude-opus-5-5`、medium) 和 `gemini-4-neon` (`reviewer_c`) 三审。无需签名服务。手动导入的角色是操作者记录的来源，不证明供应商身份。
+## PETL capture：自 v9 起采用串行闯关
+
+此任务以本节取代下文的并行人工审核。实施 GPT `gpt-6.2-astra` 独占正式代码与测试的修改权，
+不投票。冻结基线和补丁后依次启动独立 GPT `gpt-6.2-astra` → DeepSeek `deepseek-v4.1-flash` → Gemini `gemini-4-neon` → Claude Code CLI `claude-opus-5-5`（medium）。
+一关实跑 PASS 且原文封存才启动下一关；给 Gemini 足够的首字等待时间，
+仅当本关确认连接失败才记录缺席，不记 PASS。
+
+每关用全新会话及独立干净副本，接收同一中性需求、基线、补丁与命令，不读取其他报告、预跑输出、实现结论或 PR 正文。
+亲自跑基线叠测试、补丁后同一测试及相关套件；至少实跑一个反例或错误实现，记录输入、命令、退出码和观察，
+独立评价根因、兼容性、测试区分能力。只有通过数的报告未完成。
+
+REVISE 停止晋级。代码或测试变化后，冻结新哈希，全部旧票失效，从 GPT 第一关重来。
+未改包的证据分歧须由提出者复核撤回，否则阻塞。环境故障、无实跑或报告不完整不放行。
+最后一关封存后，参与者才交换原文、核对最终 PR 正文及异议；同一最终包全员 PASS 且没有未解分歧，
+仍须取得该项明确发布授权。
+
+## 默认代码修复流程：GPT 实施、两轮独立实跑（2026-11-25 起）
+
+1. **实施**：GPT 独立分析问题，完成修复和回归测试，冻结上游基线 SHA、待提交 SHA（或补丁摘要）和测试版本。
+   实施者的运行记录单独保存，不投审查票。
+2. **首轮盲审**：GPT 经 OpenCode CLI、CC 经 Claude Code CLI，
+   分别开启全新、有本地测试执行能力的会话。为双方准备互不共享的干净工作树，输入相同的基线、修复版、测试、依赖版本和中性复现命令。
+   不要附实施报告、预跑日志、预期通过数、他方意见或带测试结论的 PR 正文；不要让会话从报告目录或交接文件间接读到答案。
+3. **双方各跑两侧**：每位审阅者须亲自执行基线与修复版测试。新回归测试在基线只叠加测试，
+   不叠加实现；确认失败源于待修问题，而非导入、环境或夹具错误。在修复版跑同一回归及相关套件。
+   分别保存会话 ID、实际 SHA、命令、退出码、输出与独立结论。两份初审报告都固定以后才能互相展示。
+   只读 diff、引用别人的日志或口头 PASS 都不算实跑。
+4. **第二轮交叉终审**：将双方首轮原始报告和最终提交包（diff、测试、PR 正文）同时给双方核对。
+   逐项处理分歧，必要时各自补跑。只有两方都明确 PASS、无未解分歧且提交包与审查版本一致，
+   才可按用户授权提交。缺席、超时、无法运行或证据不足就记录 BLOCKED，不降级为静态审阅。
+   修复或测试变更后重新冻结并重跑；仅正文变更也要重新核对最终提交包。
+
+该流程是对人工 CLI 贡献任务的执行要求，不代表程序已自动强制检查。既有三审工具若另有门禁仍需满足，
+成功导入报告不能替代上述实跑。以往的静态 PASS 不追认为新标准下的验收。
+
+### Claude 首轮任务：独立审查实施决定
+
+不要把 GPT 的根因分析或选择修法的理由当作首轮输入。给双方相同的原始需求、相关上游约定、冻结的源码和补丁；
+让 Claude 从调用路径和可观察行为重建问题，独立回答：
+
+- **诊断是否成立？** 这个输入是否受支持，实际违反了哪条约定？失败能否由环境、夹具或错误的预期解释？
+- **修法是否合理？** 补丁修的是根因还是只让示例通过？与保留旧行为或更小的修法相比，它改变了谁的行为，是否值得？
+- **测试能证明什么？** 断言是否覆盖用户可见的行为、能否区分正确实现与错误实现？
+  主动选取最可能推翻修法的边界、反例或对照，能实跑就实跑，并记录输入与观察。例如聚合顺序可能改变时，
+  单测 `sum` 不够，可另用 `tuple` 检查顺序。
+
+首轮报告除测试记录外，还要写出上述独立判断、证据、未覆盖范围及阻塞异议。无须为了审查而制造异议，
+但仅复述通过数不能给 PASS。证据显示实现或测试不合理时给 `REVISE`，
+证据不足时给 `BLOCKED`；两份首轮报告封存后将异议原文交回 GPT。
+GPT 负责修改或用可复验的证据答复，不能自行宣布异议已解决。若修改代码或测试，
+冻结新版本，双方用全新会话重开首轮；仅修改正文则重新核对最终提交包。保留历轮异议与处理结果，
+直至双方确认无未解分歧；无法解决则不提交。
+
+## 既有 Repo Scout 程序门禁
+
+人工四方审阅的 Gemini 线路（2026-11-25）：使用 `gemini-4-neon`，
+OpenAI 兼容 Base URL `https://api.zzshu.cc/v1`（`POST /chat/completions`），
+运行时从环境变量 `PETL_REVIEW_GEMINI_KEY` 供给密钥。
+该组合已用真实对话验证；不使用 `zzshu.cc` 主域名或 `:generateContent` 网页路径。
+连通测试不计审阅票。
+
+人工贡献任务实行四方独立审核（2026-11-25 更新）：GPT、Claude Code、Gemini、DeepSeek「大肥鱼」各开全新会话，
+在各自独立干净源码副本中亲跑同一基线叠测试、同一修复和相关套件，并独立审查诊断、兼容性、测试与反例。
+实施会话不投票。全部初审报告封存后才交换，再由每位参与者对同一最终包明确给出结论。
+任一实质异议均须处理；代码或测试改变则全体新会话重新盲审。纯 API 静态意见、空响应和未实跑都不是审阅票。
+只允许 Gemini 经确认连接失败后按用户约定记录缺席（不记 PASS）；
+其他审阅者缺席则阻塞。所有实际参与者终审 PASS 后才可按逐项授权发布。DeepSeek 请求模型 `deepseek-v4.1-flash`。
+这个人工约定不改变下述程序门禁的角色配置。凭证不得写入仓库或审阅材料。
+
+现有程序门禁配置由 GPT (`reviewer_a`)、Claude Code (`reviewer_b`，
+`claude-opus-5-5`、medium) 和 `gemini-4-neon` (`reviewer_c`) 三审。
+无需签名服务。手动导入的角色是操作者记录的来源，不证明供应商身份。
 
 1. `review-start ID finding` 创建证据轮次；对最终代码、提交包和 Profile 分别使用 `diff`、`submission`、`profile`。
-2. `review-packet ID finding reviewer_a independent` 导出指定角色材料，每个模型使用新会话独立审查。保存每份报告为 UTF-8 JSON：`{"binding": <原 packet.binding>, "decision": <审查决定>}`。`decision` 包含 `session_id`、`verdict`、`evidence`（`kind` 和 `reference`）、`disagreements`、`rationale` 和 `reviewed_at`。用 `review-import ID finding report.json` 导入。Gemini 也可直接调用：设置环境变量 `REPO_SCOUT_GEMINI_API_KEY`，执行 `review-gemini ID finding independent`，经 `/v1/chat/completions` 发起一次付费请求并导入结果。
-3. 所有参与者的初审齐备后，用 `final` 阶段提供全部已记录的初审意见。所有参与者都要给出有证据的 PASS 且无未解分歧。网络确实故障时，操作者可执行 `review-network-failure ID finding reviewer_c timeout`（角色可换成任意一位）；本轮保留故障记录，改由另外两位完成。不得因负面意见、缺凭证或格式错误降级。终审已有结论或初审存在异议的角色不能被排除；一轮最多排除一位。`review-status` 显示参与者、降级原因和报告。
-4. `approve`、`approve-submit`、`approve-profile` 默认只预览，返回 `approval_digest`。操作者核对后，以相同参数追加 `--confirm-digest <approval_digest>` 确认当前内容。`approve-submit` 的 `--digest` 指草稿摘要，与预览返回的审批摘要用途不同。实施和公开提交分别确认；验收不触发发送。
+2. `review-packet ID finding reviewer_a independent` 导出指定角色材料，
+   每个模型使用新会话独立审查。保存每份报告为 UTF-8 JSON：`{"binding": <原 packet.binding>, "decision": <审查决定>}`。
+   `decision` 包含 `session_id`、`verdict`、`evidence`（`kind` 和 `reference`）、`disagreements`、`rationale` 和 `reviewed_at`。
+   用 `review-import ID finding report.json` 导入。
+   Gemini 也可直接调用：设置环境变量 `REPO_SCOUT_GEMINI_API_KEY`，
+   执行 `review-gemini ID finding independent`，
+   经 `/v1/chat/completions` 发起一次付费请求并导入结果。
+3. 所有参与者的初审齐备后，用 `final` 阶段提供全部已记录的初审意见。
+   所有参与者都要给出有证据的 PASS 且无未解分歧。网络确实故障时，操作者可执行 `review-network-failure ID finding reviewer_c timeout`（角色可换成任意一位）；
+   本轮保留故障记录，改由另外两位完成。不得因负面意见、缺凭证或格式错误降级。终审已有结论或初审存在异议的角色不能被排除；
+   一轮最多排除一位。`review-status` 显示参与者、降级原因和报告。
+4. `approve`、`approve-submit`、`approve-profile` 默认只预览，
+   返回 `approval_digest`。操作者核对后，以相同参数追加 `--confirm-digest <approval_digest>` 确认当前内容。
+   `approve-submit` 的 `--digest` 指草稿摘要，与预览返回的审批摘要用途不同。
+   实施和公开提交分别确认；验收不触发发送。
 
-报告仍绑定当前轮次、源码、测试和草稿。内容变化须重新审查受影响的对象并取得相应确认。旧协议的历史记录不改写，也不自动算作新协议的 PASS。新轮次需重新取得实际报告，本地数据库只应由操作者写入。
+报告仍绑定当前轮次、源码、测试和草稿。内容变化须重新审查受影响的对象并取得相应确认。
+旧协议的历史记录不改写，也不自动算作新协议的 PASS。新轮次需重新取得实际报告，
+本地数据库只应由操作者写入。

@@ -18,7 +18,7 @@ PROMPT_FINAL = "Read {folder}/final.md and the materials in that directory. Retu
 
 def _environment(role):
     try:
-        from deployment import PRIVATE, environment  # folder-scoped private wiring, optional
+        from .deployment import PRIVATE, environment  # folder-scoped private wiring, optional
     except ImportError:
         return os.environ.copy()
     return environment(role) if PRIVATE.is_file() else os.environ.copy()

@@ -1,2 +1,2 @@
 先读 README.md 和 docs/protocol.md。只在操作者指定的新项目上实施。不要将旧项目、旧报告、API 密钥或实现笔记作为盲审上下文。通过 orchestrate.py / gate.py 操作门禁，启动语见 prompts/operator.md；不得直接修改运行数据库、代签或自行放行。实施者不读审阅报告，只读 handoff/ 中的异议。默认本地记录，不发布。公开提交必须由用户确认具体项目与最终包。Git 提交标题只写变更类型（如 fix、feat、test、docs）。
-当用户说「请按照这个文件夹中的内容部署流水线」：在包含本文件的目录直接运行 `python -B deploy.py`（Windows 若没有 python 命令可用 `py -3`）。不要读取或展示 private 文件内容。成功后报告 LOCAL READY 和未验证的在线线路；失败则按 DEPLOY.md 解决具体缺项并重跑。部署不是启动四关或发布的授权。
+当用户说「请按照这个文件夹中的内容部署流水线」：在包含本文件的目录直接运行 `python -B deploy.py`（Windows 若没有 python 命令可用 `py -3`）。不要读取或展示 private 文件内容。成功后报告 LOCAL READY 和未验证的在线线路；失败则按 docs/deploy.md 解决具体缺项并重跑。部署不是启动四关或发布的授权。

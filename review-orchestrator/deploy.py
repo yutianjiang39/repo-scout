@@ -4,7 +4,7 @@ import json
 import shutil
 import subprocess
 import sys
-from deployment import ROOT, PRIVATE, binary, environment
+from ro.deployment import ROOT, PRIVATE, binary, environment
 from gate import MODELS
 
 

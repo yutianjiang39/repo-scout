@@ -38,6 +38,20 @@ orchestrate.py ── ro/orchestrator.py（生命周期）
                     └─ gates      唯一的状态变更者（gate.py 是它的手动 CLI）
 ```
 
+目录：
+
+```text
+orchestrate.py  gate.py  deploy.py    入口：自动流程 / 手动门禁 / 本地部署
+ro/          程序（各模块 + deployment 私有接线）
+capsule/     冻结进每个审阅材料包的文件：协议、关卡说明、报告格式、终审说明、harness.py
+prompts/     给人和实施会话看的：operator.md（启动语）、implement.md
+config/      审阅者注册表、OpenCode provider 示例
+templates/   checks.json 与任务输入模板
+docs/        操作协议、模型线路、部署
+tests/       离线测试（假审阅者）
+private/ .runtime/ .cache/   本机私有，不入库
+```
+
 每个首审关卡的流程：
 `prepare`（全新副本 + 材料包）→ `preflight`（程序跑测试和变异，证据封存）→ 审阅者 CLI（独立判断）→ `post`（审计、回执、探针重跑）→ `report`（门禁对照证据校验）→ PASS 则封存本关并启动下一关。
 
@@ -66,10 +80,22 @@ gate.py --db <db> complete "交付回执"
 
 任务目录结构：`review.sqlite`（账本：状态、所有封存文件）、`evidence/`（程序证据）、`transcripts/`（CLI 原始输出、`post.json`、探针重跑）、`sealed/`（已通过关卡的材料）、`handoff/`（给实施者的异议）。
 
+## 记录总库
+
+所有任务记录（旧的手工审阅和新的 `review.sqlite` 账本）统一登记在一个 SQLite 总库里。文件留在原位，库里只存事实：任务、文件类别、SHA-256、大小，以及只能追加的事件日志。CLI 会话材料（OpenCode/Claude 转录、提示词、命令捕获）只计数，不读取、不入库。
+
+```text
+python -m ro.archive --db <records.sqlite> import <repos目录>   # 可重复执行，已登记的不重复记录
+python -m ro.archive --db <records.sqlite> list [仓库]
+python -m ro.archive --db <records.sqlite> verify             # 文件被改或丢失时列出
+```
+
+文件改动后再 import，会新增一行哈希，旧哈希保留。
+
 ## 边界
 
 - 隔离靠三层：独立副本加封存（物理上拿不到）、Claude 的 `--restricted`（文件工具出不了工作目录）、转录审计（事后发现并作废）。Bash 本身不是沙箱，需要系统级隔离时请用独立账号或容器运行 CLI。容器 runner 预留在 `ro/envs.py` 的 `Env` 接口上，本机没有 Docker，还没有实现。
 - 变异目前只支持 Python。非 Python 改动会记为 `supported: false`，审阅者自己设计的探针仍是必需的。
 - 覆盖率分析还没有接入。
 
-运行 `python -B -m unittest discover -s tests -v` 可离线验证，测试用脚本化的假审阅者覆盖了每一条强制规则。私有部署见 `DEPLOY.md`。
+运行 `python -B -m unittest discover -s tests -v` 可离线验证，测试用脚本化的假审阅者覆盖了每一条强制规则。私有部署见 `docs/deploy.md`。

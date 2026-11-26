@@ -6,7 +6,7 @@ from pathlib import Path
 from . import config
 from .util import ROOT, dump, git, git_text, need, sha
 
-PROMPTS = ROOT / "prompts"
+CAPSULE = ROOT / "capsule"  # files shipped into every reviewer workspace
 # Files never shown in the first round (final-round material / templates).
 NOT_IN_MANIFEST = {"final.md", "stage.md"}
 
@@ -51,9 +51,9 @@ def _common(L, prior, req, commands, flags, kind):
     protocol = "artifact.md" if kind == "artifact" else "protocol.md"
     for name, src in (("PROTOCOL.md", protocol), ("contract.md", "report.md"),
                       ("final.md", "final.md"), ("stage.md", "stage.md")):
-        L.put(name, (PROMPTS / src).read_bytes())
+        L.put(name, (CAPSULE / src).read_bytes())
     if kind == "code":
-        L.put("harness.py", (ROOT / "harness.py").read_bytes())
+        L.put("harness.py", (CAPSULE / "harness.py").read_bytes())
     manifest = dict(version=L.v, kind=kind, patch=s["patch"], base=s.get("base"), tree=s.get("tree"),
                     gates=s["gates"],
                     files={n: sha(L.get(n)) for n in sorted(L.names()) if n not in NOT_IN_MANIFEST})

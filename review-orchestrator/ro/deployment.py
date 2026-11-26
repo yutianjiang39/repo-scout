@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 
-ROOT = Path(__file__).resolve().parent
+ROOT = Path(__file__).resolve().parent.parent
 PRIVATE = ROOT / "private" / "credentials.json"
 
 

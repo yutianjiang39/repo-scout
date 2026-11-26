@@ -247,6 +247,38 @@ class Enforcement(Base):
 
 
 class Units(unittest.TestCase):
+    def test_progress_lines_same_for_every_reviewer_cli(self):
+        from ro.reviewers import describe
+        claude = [
+            {"type": "assistant", "message": {"content": [{"type": "thinking", "thinking": "..."}]}},
+            {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Read",
+                                                           "input": {"file_path": "REVIEW/STAGE.md"}}]}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading the stage."}]}},
+            {"type": "system", "subtype": "api_retry", "attempt": 1, "max_retries": 9, "error_status": 502},
+            {"type": "result", "subtype": "success", "num_turns": 3, "total_cost_usd": 0.5},
+        ]
+        opencode = [  # shapes as in real `opencode run --format json` transcripts
+            {"type": "step_start", "part": {"type": "step-start"}},
+            {"type": "reasoning", "part": {"type": "reasoning", "text": "..."}},
+            {"type": "tool_use", "part": {"type": "tool", "tool": "read",
+                                          "state": {"status": "completed", "input": {"path": "REVIEW/STAGE.md"}}}},
+            {"type": "text", "part": {"type": "text", "text": "Reading the stage."}},
+            {"type": "retry", "attempt": 1, "error": {"message": "502 Bad Gateway"}},
+            {"type": "step_finish", "part": {"type": "step-finish", "reason": "tool-calls"}},
+            {"type": "step_finish", "part": {"type": "step-finish", "reason": "stop", "cost": 0,
+                                             "tokens": {"input": 11747, "output": 758, "reasoning": 0}}},
+        ]
+
+        def kinds(events):
+            lines = [describe(e)[0] for e in events]
+            return {k for line in lines if line
+                    for k in ("thinking", "tool", "says", "API retry", "model finished") if line.startswith(k)}
+
+        self.assertEqual(kinds(claude), {"thinking", "tool", "says", "API retry", "model finished"})
+        self.assertEqual(kinds(opencode), kinds(claude))
+        self.assertTrue(all(describe(e)[1] for e in opencode if e["type"] in ("step_start", "step_finish")),
+                        "opencode steps count as model progress for the stall guard")
+
     def test_scrub_removes_every_audited_form_of_workspace(self):
         ws = Path(tempfile.gettempdir()).resolve() / "开源贡献" / "review-gpt-abc"
         p = str(ws)

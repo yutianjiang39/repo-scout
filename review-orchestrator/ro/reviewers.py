@@ -177,7 +177,15 @@ def describe(obj):
         return _tool(part.get("tool"), (part.get("state") or {}).get("input")), True
     if t == "text" and part.get("text", "").strip():
         return "says: " + _brief(part["text"]), True
-    if t in ("step_start", "step_finish", "reasoning"):
+    if t == "reasoning":  # opencode, same line as claude's thinking blocks
+        return "thinking", True
+    if t == "step_finish" and part.get("reason") == "stop":  # opencode's last step
+        tok = part.get("tokens") or {}
+        bits = [f"{tok[k]} {k} tokens" for k in ("input", "output", "reasoning") if tok.get(k)]
+        if part.get("cost"):
+            bits.append(f"${part['cost']:.2f}")
+        return "model finished" + (f": {', '.join(bits)}" if bits else ""), True
+    if t in ("step_start", "step_finish"):
         return None, True
     if t == "error":
         return "error: " + _brief(obj.get("error") or obj), False

@@ -40,7 +40,9 @@ class Base(unittest.TestCase):
         self.db = self.root / "task" / "review.sqlite"
         self.cli = self.fake_cli()
         env = patch.dict(os.environ, {"REVIEW_OPENCODE_BIN": str(self.cli), "REVIEW_CLAUDE_BIN": str(self.cli),
-                                      "FAKE_MODE": "pass", "REVIEW_MIRRORS": str(self.root / "mirrors")})
+                                      "FAKE_MODE": "pass", "REVIEW_MIRRORS": str(self.root / "mirrors"),
+                                      # as when orchestrate.py is started from Git Bash elsewhere
+                                      "PWD": str(self.root)})
         env.start()
         self.addCleanup(env.stop)
         p = patch("ro.reviewers._environment", lambda role: os.environ.copy())

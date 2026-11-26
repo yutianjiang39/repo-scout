@@ -26,6 +26,20 @@ def _environment(role):
     return environment(role) if PRIVATE.is_file() else os.environ.copy()
 
 
+def child_env(role, work):
+    """Environment for a reviewer CLI running in `work`.
+
+    PWD must name the gate workspace: `opencode run --standalone` hands the inherited PWD
+    (not the real cwd) to its server as the project directory. Launched from Git Bash or an
+    OpenCode shell, PWD is the orchestrator's directory, so the reviewer worked there and
+    could not find REVIEW/.
+    """
+    env = _environment(role)
+    env["PWD"] = str(Path(work).resolve())
+    env.pop("OLDPWD", None)
+    return env
+
+
 class OpenCode:
     def binary(self):
         if "REVIEW_OPENCODE_BIN" in os.environ:
@@ -221,7 +235,7 @@ def run_cli(role, work, transcript_dir, final=False, session=None, folder=None, 
 
     reason = None
     with (transcript_dir / "stdout").open("wb") as out, (transcript_dir / "stderr").open("wb") as err:
-        proc = subprocess.Popen(cmd, cwd=work, env=_environment(role), stdout=subprocess.PIPE, stderr=err)
+        proc = subprocess.Popen(cmd, cwd=work, env=child_env(role, work), stdout=subprocess.PIPE, stderr=err)
         reader = threading.Thread(target=pump, args=(proc.stdout, out), daemon=True)
         reader.start()
         beat = t0

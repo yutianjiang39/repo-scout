@@ -10,7 +10,8 @@ from pathlib import Path
 
 args = sys.argv[1:]
 mode = os.environ.get("FAKE_MODE", "pass")
-work = Path.cwd()
+# Like `opencode run --standalone`: the project directory is the inherited PWD when set.
+work = Path(os.environ.get("PWD") or Path.cwd())
 session = next((args[i + 1] for i, a in enumerate(args) if a in ("--session-id", "--resume", "--session")), None)
 session = session or "ses_" + uuid.uuid4().hex[:10]
 prompt = args[args.index("-p") + 1] if "-p" in args else args[-1]

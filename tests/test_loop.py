@@ -220,6 +220,15 @@ class ContributionLoopTests(unittest.IsolatedAsyncioTestCase):
                            reason="Reviewed the precise upstream issue and reproduction")
         return draft
 
+    async def test_archive_failure_rolls_back_new_draft(self):
+        old = await self.prepared_issue()
+        with patch('repo_scout.workflow.write_json',side_effect=OSError('disk full')):
+            with self.assertRaisesRegex(OSError,'disk full'):
+                prepare_draft(self.store,self.root,'F-LOOP',submission_type='ISSUE',title='Updated title for candidate',
+                              body=old['draft']['body'],risk=old['draft']['risk'])
+        self.assertEqual(self.store.require('draft','F-LOOP')['digest'],old['digest'])
+        self.assertEqual(self.store.require('finding','F-LOOP')['draft_digest'],old['digest'])
+
     async def accepted_issue(self):
         await self.approved_issue()
         sub = await submit(self.store, self.client, self.root, self.config, "F-LOOP")

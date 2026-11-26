@@ -28,7 +28,8 @@ def outcome(r):
         if n:
             bits.append(f"{n} {k}")
     bits.append(f"{r['seconds']}s")
-    return f"exit={r['exit']}{' TIMEOUT' if r['timed_out'] else ''} ({', '.join(bits)})"
+    stuck = f" in {r['stuck_in']}" if r.get("stuck_in") else ""
+    return f"exit={r['exit']}{' TIMEOUT' + stuck if r['timed_out'] else ''} ({', '.join(bits)})"
 
 
 DEP_FILES = envmod.DEP_FILES
@@ -65,6 +66,22 @@ def unittest_summary(text):
     return dict(ran=int(m.group(1)), failures=int(f.group(1)) if f else 0, errors=int(e.group(1)) if e else 0)
 
 
+TIMEOUT = 600  # seconds per command unless checks.json sets "timeout"
+
+# Verbose runners announce a test before its result: unittest -v prints
+# "test_x (pkg.Class.test_x) ... " and pytest -v prints "tests/a.py::test_x ".
+_UNITTEST_START = re.compile(r"^(\w+) \(([\w.]+)\)(?: \.\.\.|$)", re.M)
+_PYTEST_START = re.compile(r"^(\S+\.py::\S+)", re.M)
+
+
+def running_test(text):
+    """The test a timed-out verbose run was still inside (the last one it started), or None."""
+    hits = [(m.start(), m.group(2) if m.group(2).endswith("." + m.group(1)) else f"{m.group(2)}.{m.group(1)}")
+            for m in _UNITTEST_START.finditer(text)]
+    hits += [(m.start(), m.group(1)) for m in _PYTEST_START.finditer(text)]
+    return max(hits)[1] if hits else None
+
+
 class Runner:
     def __init__(self, out_dir, timeout):
         self.out = Path(out_dir)
@@ -87,7 +104,7 @@ class Runner:
                 argv.append(f"--junitxml={local_junit}")
             junit.unlink(missing_ok=True)
             local_junit.unlink(missing_ok=True)
-            start, timed_out = time.time(), False
+            start, timed_out, stuck = time.time(), False, None
             label = f"{phase} {env.name} {kind}" + (f"[{i + 1}/{len(cmds)}]" if len(cmds) > 1 else "")
             if self.log and record:
                 self.log(f"  > {label}: {' '.join(Path(x).name if os.sep in x else x for x in argv[:6])[:100]}")
@@ -99,7 +116,12 @@ class Runner:
                                           stderr=subprocess.STDOUT, timeout=timeout or self.timeout).returncode
                 except subprocess.TimeoutExpired:
                     code, timed_out = 124, True
-                    fh.write(b"\n[engine] timeout\n")
+                    fh.flush()
+                    stuck = running_test(log.read_text(encoding="utf-8", errors="replace"))
+                    where = stuck or "unknown (run tests verbosely to see it)"
+                    fh.write(f"\n[engine] timeout after {timeout or self.timeout}s; still running: {where}\n".encode())
+                    if self.log and record:
+                        self.log(f"  TIMEOUT {label} after {timeout or self.timeout}s; still running: {where}")
                 except OSError as e:
                     code = 127
                     fh.write(f"\n[engine] cannot start: {e}\n".encode())
@@ -107,7 +129,7 @@ class Runner:
                 local_junit.replace(junit)
             text = log.read_text(encoding="utf-8", errors="replace")
             rec = dict(phase=phase, kind=kind, env=env.name, index=i, argv=argv, exit=code,
-                       timed_out=timed_out, seconds=round(time.time() - start, 1),
+                       timed_out=timed_out, stuck_in=stuck, seconds=round(time.time() - start, 1),
                        log=f"logs/{log.name}", log_sha256=sha_file(log),
                        junit=junit_summary(junit), unittest=unittest_summary(text),
                        tail=text[-1500:])
@@ -147,7 +169,7 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
     """
     work, capsule = Path(work), Path(capsule)
     binding = json.loads((capsule / "binding.json").read_text(encoding="utf-8"))
-    runner = Runner(out_dir, checks.get("timeout", 1800))
+    runner = Runner(out_dir, checks.get("timeout", TIMEOUT))
     runner.log = log
     ev = dict(attempt=binding["attempt"], patch=binding["patch"], role=binding["role"],
               base=binding["base"], tree=binding["tree"], runs=runner.runs, problems=[])
@@ -302,7 +324,7 @@ def verify_probe(work, capsule, env, checks, probe_diff, on, out_dir, name):
     except subprocess.CalledProcessError as e:
         res.update(detected=None, error="probe diff does not apply: " + e.stderr.decode(errors="replace")[-300:])
         return res
-    runner = Runner(out_dir, checks.get("timeout", 1800))
+    runner = Runner(out_dir, checks.get("timeout", TIMEOUT))
     if any(r["exit"] for r in runner.execute(f"probe-{name}", "prepare", dst, env, checks.get("prepare", []))):
         return dict(res, detected=None, error="probe checkout preparation failed")
     rs = runner.execute(f"probe-{name}", "focused", dst, env, checks["focused"])

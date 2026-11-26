@@ -247,6 +247,44 @@ class Enforcement(Base):
 
 
 class Units(unittest.TestCase):
+    def test_running_test_names_the_one_a_hung_run_was_inside(self):
+        from ro.engine import running_test
+        py311 = ("test_ok (tests.ws.T.test_ok) ... ok\n"
+                 "test_reconnect_fail (tests.ws.WSDisconnectionTests.test_reconnect_fail) ... "
+                 "ERROR:coinbase:Connection closed (ERROR): received 4000\n")
+        self.assertEqual(running_test(py311), "tests.ws.WSDisconnectionTests.test_reconnect_fail")
+        py310 = "test_ok (tests.ws.T) ... ok\ntest_hang (tests.ws.T) ... "
+        self.assertEqual(running_test(py310), "tests.ws.T.test_hang")
+        docstring = "test_ok (tests.ws.T.test_ok)\nFirst line of the docstring ... ok\n"
+        self.assertEqual(running_test(docstring), "tests.ws.T.test_ok")
+        pytest = "tests/test_a.py::test_one PASSED [ 50%]\ntests/test_a.py::test_two "
+        self.assertEqual(running_test(pytest), "tests/test_a.py::test_two")
+        self.assertIsNone(running_test("....\n"))  # non-verbose: nothing to name
+
+    def test_timeout_reports_the_test_still_running(self):
+        from ro.engine import TIMEOUT, Runner, outcome
+        from ro.envs import Env
+        self.assertEqual(TIMEOUT, 600)
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            work = Path(tmp) / "work"
+            work.mkdir()
+            (work / "hang_test.py").write_text(
+                "import time, unittest\n"
+                "class T(unittest.TestCase):\n"
+                "    def test_a(self):\n        pass\n"
+                "    def test_b(self):\n        time.sleep(60)\n", encoding="utf-8")
+            lines = []
+            runner = Runner(Path(tmp) / "out", 3)
+            runner.log = lines.append
+            [rec] = runner.execute("fixed", "suite", work, Env("sys", sys.executable),
+                                   [["{py}", "-m", "unittest", "-v", "hang_test"]])
+        self.assertTrue(rec["timed_out"])
+        self.assertEqual(rec["stuck_in"], "hang_test.T.test_b")
+        self.assertIn("still running: hang_test.T.test_b", rec["tail"])
+        self.assertIn("TIMEOUT in hang_test.T.test_b", outcome(rec))
+        self.assertTrue(any("TIMEOUT fixed sys suite after 3s; still running: hang_test.T.test_b" in x
+                            for x in lines), lines)
+
     def test_progress_lines_same_for_every_reviewer_cli(self):
         from ro.reviewers import describe
         claude = [

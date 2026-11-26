@@ -1,0 +1,25 @@
+{
+  "_comment": "Gate order = key order. Adding a reviewer = one entry + an adapter in ro/reviewers.py.",
+  "gpt": {
+    "adapter": "opencode",
+    "model": "vvvvvip/gpt-6.2-astra#high",
+    "required": true
+  },
+  "deepseek": {
+    "adapter": "opencode",
+    "model": "opencode/deepseek-v4.1-flash-free",
+    "required": false
+  },
+  "gemini": {
+    "adapter": "opencode",
+    "model": "review-gemini/gemini-4-neon",
+    "required": false,
+    "skippable_on_connection_failure": true
+  },
+  "claude": {
+    "adapter": "claude",
+    "model": "claude-opus-5-5",
+    "effort": "medium",
+    "required": true
+  }
+}

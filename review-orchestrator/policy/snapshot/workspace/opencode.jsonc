@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permissions": [
+    { "action": "subagent", "resource": "*", "effect": "allow" },
+    // 需要决策时弹出选项让用户选（question 工具）
+    { "action": "question", "resource": "*", "effect": "allow" }
+  ],
+  "agents": {
+    "general": {
+      "permissions": [{ "action": "subagent", "resource": "*", "effect": "allow" }]
+    },
+    "explore": {
+      "permissions": [{ "action": "subagent", "resource": "*", "effect": "allow" }]
+    }
+  },
+  "experimental": {
+    "subagent_depth": 3
+  }
+}

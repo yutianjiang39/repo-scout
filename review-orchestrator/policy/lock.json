@@ -1,0 +1,19 @@
+{
+  "files": {
+    "workspace/AGENTS.md": "21dd6fe3e517d6fa4607fae0f05445ac8e1b54cad4731301ba10fbece71f733a",
+    "workspace/opencode.jsonc": "ad4caf6d9421a178af88b090f0ec93df667a639b72b26532ca635fd24428e672",
+    "repo-scout/AGENTS.md": "49ec81d615c55c1f56fde96aa57506dfc306231dc52001c5a9cd988a5f5fae0c",
+    "pipeline/AGENTS.md": "98af7a739bef56dfaf5dca68477b2d81361178fc6e8c1c886d3133b8d6310e7a",
+    "pipeline/config/reviewers.json": "5c7e2f1e2499acbc2dc036cefb8f7ce133e567c38191d7b04081f471d9f2a88c",
+    "pipeline/capsule/artifact.md": "21fe689feaf2401fcb4f612ce66288a015595cef8cfccb6f6fb66a6caf052233",
+    "pipeline/capsule/final.md": "7aa251460570384692fdc689d1dd9b3f92883c9ef6d3152f26de8e54a1daff10",
+    "pipeline/capsule/harness.py": "38e265af3ce5b3e7f49a81b8e49980bea38a9e8154d70958ce0eaee476f4ba42",
+    "pipeline/capsule/protocol.md": "044a04774ce78dd3be42c00c5af44341b25bfc241a5868d4d344fff83ea2d0eb",
+    "pipeline/capsule/report.md": "c9a4e5135832c53475a52ecfbd9ab9a66470c0923482823d35958b682670fee1",
+    "pipeline/capsule/stage.md": "dab401d806c950fb5855a55186d14bfd12f5c7f8efb9a391442baf95323c3452",
+    "pipeline/prompts/implement.md": "773d9673ca4a3de277645df45239659a58e8e13aa31dd8d4c02967673eca869a",
+    "pipeline/prompts/operator.md": "6d3ea58af753e11a564c28a1e937ebdac06ba13fbe475576daa5bcf9d3e229ee"
+  },
+  "approved_by": "用户：可以写进文字，但要保证运行几次以后文字还是这样，不能自行把指令都改了（2026-11-26）",
+  "at": "2026-11-26 20:15:11"
+}

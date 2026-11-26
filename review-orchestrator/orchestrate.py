@@ -44,6 +44,8 @@ def main():
     f.add_argument("--serial", action="store_true")
     sub.add_parser("status")
     a = p.parse_args()
+    from ro import policy
+    policy.enforce(lambda m: print(m, flush=True))
     t = Task(a.db, a.work_root, a.cache, a.timeout, log=lambda m: print(m, flush=True))
     try:
         if a.cmd == "start":

@@ -22,6 +22,8 @@ def main():
     p.add_argument("command", choices=COMMANDS)
     p.add_argument("args", nargs=argparse.REMAINDER)
     a = p.parse_args()
+    from ro import policy
+    policy.enforce()
     a.db.parent.mkdir(parents=True, exist_ok=True)
     try:
         print(json.dumps(execute(a.db, a.command, *a.args), ensure_ascii=False, indent=2))

@@ -98,6 +98,10 @@ class Flow(Base):
         self.assertEqual(cc["mutation"]["survived"], ev["mutation"]["survived"])
         self.assertTrue(any(r["phase"] == "baseline" for r in cc["runs"]), "tests still re-run per gate")
         gpt_ws = Path(s["workspaces"]["gpt"])
+        cached = [p for p in (self.task().dir / "mutation").rglob("*") if p.is_file()]
+        self.assertTrue(cached)
+        for p in cached:
+            self.assertEqual(evidence.leaks(p.read_bytes(), {gpt_ws}), [], f"{p} leaks the computing workspace")
         self.assertFalse((gpt_ws / "REVIEW" / "out").exists(), "PASS gate must be sealed")
         self.assertFalse((gpt_ws / ".review-runs").exists())
         self.assertEqual(self.task().final(self.file("pr.md", "fix: abs")), 0, "\n".join(self.logs))
@@ -241,6 +245,21 @@ class Enforcement(Base):
 
 
 class Units(unittest.TestCase):
+    def test_scrub_removes_every_audited_form_of_workspace(self):
+        ws = Path(tempfile.gettempdir()).resolve() / "开源贡献" / "review-gpt-abc"
+        p = str(ws)
+        fwd = p.replace("\\", "/")
+        forms = [p, p.upper(), fwd, p.replace("\\", "\\\\"), p + "\\.review-runs\\mutation\\x.py"]
+        if fwd[1] == ":":
+            forms.append("/" + fwd[0].lower() + fwd[2:])
+        text = ("$ pytest\n" + "\n".join(f"File \"{f}\", line 3" for f in forms) + "\n").encode("utf-8")
+        self.assertTrue(evidence.leaks(text, {ws}))
+        out = evidence.scrub_bytes(text, ws)
+        self.assertEqual(evidence.leaks(out, {ws}), [])
+        self.assertIn(evidence.WORKSPACE_TOKEN.encode() + b"\\.review-runs\\mutation\\x.py", out)
+        other = Path(tempfile.gettempdir()).resolve() / "review-claude-xyz"
+        self.assertIn(str(other).encode(), evidence.scrub_bytes(str(other).encode(), ws), "other paths untouched")
+
     def test_mutants_only_on_added_lines_and_keep_formatting(self):
         diff = (b"diff --git a/m.py b/m.py\n--- a/m.py\n+++ b/m.py\n@@ -1,2 +1,4 @@\n def f(x):  # keep\n"
                 b"+    if x is None:\n+        return 0\n     return x + 1\n")

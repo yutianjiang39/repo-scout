@@ -1,6 +1,6 @@
 """Test engine: deterministic runs for one reviewer's gate, in disposable worktrees.
 
-Every gate gets its own fresh runs (results are never shared between reviewers).
+Every gate gets its own fresh test runs; only mutation results are shared, workspace-neutral.
 """
 
 import json
@@ -13,6 +13,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from . import envs as envmod
+from . import evidence
 from . import mutation
 from .util import diff_paths, git_text, heartbeat, sha, sha_file
 
@@ -212,21 +213,37 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
 def shared_mutants(work, capsule, env, checks, runner, cfg, log, cache, binding):
     if not cache:
         return run_mutants(work, capsule, env, checks, runner, cfg, log)
-    key = sha(json.dumps([binding["patch"], env.freeze, checks], sort_keys=True).encode())[:16]
+    # The cache is read by other gates, whose transcripts are audited against this gate's
+    # workspace path. Cached files are therefore workspace-neutral: every form of the
+    # computing workspace's path is replaced by evidence.WORKSPACE_TOKEN. "scrub-v1" in the
+    # key keeps entries written before scrubbing existed from ever being reused.
+    key = sha(json.dumps([binding["patch"], env.freeze, checks, "scrub-v1"], sort_keys=True).encode())[:16]
     d = Path(cache) / key
     if (d / "result.json").is_file():
         res = json.loads((d / "result.json").read_text(encoding="utf-8"))
         shutil.copytree(d / "files", runner.out, dirs_exist_ok=True)
-        log(f"  mutation: reused results computed by {res['computed_by']} (same patch/env/checks)")
+        log(f"  mutation: reused results computed by {res['computed_by']} (same patch/env/checks; "
+            f"paths of that gate's workspace shown as {evidence.WORKSPACE_TOKEN})")
         return dict(res, shared=True)
     res = run_mutants(work, capsule, env, checks, runner, cfg, log)
+    res = dict(res, computed_by=binding["role"], key=key)
+    staged = {}
     for r in res.get("mutants", []):
         for rel in (r["diff"], r["log"]):
-            (d / "files" / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(runner.out / rel, d / "files" / rel)
+            staged[rel] = evidence.scrub_bytes((runner.out / rel).read_bytes(), work)
+    staged["result.json"] = evidence.scrub_bytes(
+        json.dumps(res, ensure_ascii=False, indent=2).encode("utf-8"), work)
+    leaked = {rel: evidence.leaks(data, {work}) for rel, data in staged.items()}
+    leaked = {rel: hits for rel, hits in leaked.items() if hits}
+    if leaked:
+        # Not cacheable without leaking this gate's workspace; later gates recompute instead.
+        log(f"  mutation: results not shared, workspace path survived scrubbing in {sorted(leaked)}")
+        return dict(res, shared=False)
+    for rel, data in staged.items():
+        dst = d / rel if rel == "result.json" else d / "files" / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_bytes(data)
     (d / "files").mkdir(parents=True, exist_ok=True)
-    res = dict(res, computed_by=binding["role"], key=key)
-    (d / "result.json").write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
     return dict(res, shared=False)
 
 

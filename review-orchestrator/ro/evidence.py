@@ -1,7 +1,9 @@
 """Evidence manager: program-owned evidence store, sealing, isolation audit, receipts."""
 
 import json
+import locale
 import os
+import re
 from pathlib import Path
 import shutil
 import stat
@@ -71,6 +73,37 @@ def _variants(path):
     if len(fwd) > 2 and fwd[1] == ":":
         forms.add("/" + fwd[0].lower() + fwd[2:])  # git-bash /c/...
     return {f.lower() for f in forms if len(f) > 3}
+
+
+WORKSPACE_TOKEN = "<GATE_WORKSPACE>"
+
+
+def _encodings():
+    # Tool output on Windows may be in the console code page rather than UTF-8
+    # (relevant for non-ASCII paths such as 开源贡献).
+    return {"utf-8", locale.getpreferredencoding(False) or "utf-8"}
+
+
+def scrub_bytes(data, path, token=WORKSPACE_TOKEN):
+    """Replace every form of `path` that `audit` would match with a neutral token."""
+    pats = set()
+    for f in _variants(path):
+        for enc in _encodings():
+            try:
+                pats.add(f.encode(enc))
+            except (UnicodeEncodeError, LookupError):
+                pass
+    for pat in sorted(pats, key=len, reverse=True):
+        data = re.sub(re.escape(pat), token.encode(), data, flags=re.IGNORECASE)
+    return data
+
+
+def leaks(data, forbidden):
+    """Forbidden paths still present in raw bytes, under any encoding audit could see."""
+    hits = set()
+    for enc in _encodings():
+        hits.update(audit(data.decode(enc, errors="replace"), forbidden))
+    return sorted(hits)
 
 
 def audit(text, forbidden):

@@ -26,7 +26,8 @@ class Env:
         paths = [str(dst)] + ([str(dst / "src")] if (dst / "src").is_dir() else [])
         if env.get("PYTHONPATH"):
             paths.append(env["PYTHONPATH"])
-        env.update(PYTHONPATH=os.pathsep.join(paths), PYTHONDONTWRITEBYTECODE="1", REVIEW_ENV=self.name)
+        env.update(PYTHONPATH=os.pathsep.join(paths), PYTHONDONTWRITEBYTECODE="1", REVIEW_ENV=self.name,
+                   PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
         return env
 
     def intact(self):
@@ -143,7 +144,7 @@ def drop_worktrees(work):
 def import_origin(env, module, dst):
     p = subprocess.run([env.python, "-c", f"import {module} as m; print(m.__file__)"], cwd=dst,
                        env=env.child_env(dst), capture_output=True)
-    where = p.stdout.decode(errors="replace").strip()
+    where = p.stdout.decode("utf-8", errors="replace").strip()
     ok = p.returncode == 0 and bool(where) and Path(where).resolve().is_relative_to(Path(dst).resolve())
     return dict(module=module, file=where or p.stderr.decode(errors="replace")[-500:], ok=ok)
 

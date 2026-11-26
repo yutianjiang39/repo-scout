@@ -84,9 +84,13 @@ def clone_base(dst, repo, base, tree=None):
     git(dst, "config", "core.autocrlf", "false")
     with open(dst / ".git" / "info" / "exclude", "a", encoding="utf-8") as fh:
         fh.write("\n/REVIEW/\n/.review-runs/\n")
-    src = mirror(repo, base)
-    (dst / ".git" / "objects" / "info" / "alternates").write_text(str(src / "objects") + "\n", encoding="utf-8")
-    git(dst, "fetch", "-q", "--no-tags", src.as_uri(), base)
+    if git_text(repo, "rev-parse", "--is-shallow-repository") == "true":
+        git(dst, "fetch", "-q", "--depth=1", "--no-tags", Path(repo).resolve().as_uri(), base)
+    else:
+        src = mirror(repo, base)
+        (dst / ".git" / "objects" / "info" / "alternates").write_bytes(
+            (src.joinpath("objects").as_posix() + "\n").encode("utf-8"))
+        git(dst, "fetch", "-q", "--no-tags", src.as_uri(), base)
     git(dst, "checkout", "-q", "--detach", "FETCH_HEAD")
     if tree:
         need(git_text(dst, "rev-parse", "HEAD^{tree}") == tree, "Wrong tree in fresh checkout")

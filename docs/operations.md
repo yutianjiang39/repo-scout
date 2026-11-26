@@ -2,7 +2,11 @@
 
 ## 1. 先确认本次交付验证到了哪里
 
-源码与自动化测试已实现；测试使用本地 Git fixture 和模拟 API，无需真实密钥。本次执行环境的匿名 GitHub REST 烟测遭遇传输失败，未完成真实 GitHub 网络联调；Claude Code CLI 不可用，因此没有运行真实 CC 会话，也没有付费模型调用。没有创建公开 Issue/PR、推送 Fork、发布 Profile，或获得真实上游接受记录。
+源码与自动化测试已实现；测试使用本地 Git fixture 和模拟 API，
+无需真实密钥。本次执行环境的匿名 GitHub REST 烟测遭遇传输失败，
+未完成真实 GitHub 网络联调；Claude Code CLI 不可用，
+因此没有运行真实 CC 会话，也没有付费模型调用。没有创建公开 Issue/PR、推送 Fork、发布 Profile，
+或获得真实上游接受记录。
 
 演示展示程序如何处理证据与状态，不代表用户已经在示例项目作出贡献。正式台账初始为空是正确结果。
 
@@ -22,7 +26,8 @@ repo-scout --help
 PYTHONPATH=src python -m unittest discover -s tests -v
 ```
 
-以已安装版本的 `repo-scout <command> --help` 为参数依据。阶段命令可以单独执行；先查看状态与待办，再执行相应下一步，不需要重复运行整个链路。
+以已安装版本的 `repo-scout <command> --help` 为参数依据。
+阶段命令可以单独执行；先查看状态与待办，再执行相应下一步，不需要重复运行整个链路。
 
 首次初始化与离线演示可直接使用：
 
@@ -36,7 +41,9 @@ repo-scout demo --output ./demo-work
 
 ## 3. 准备配置与凭证
 
-账号默认 `yutianjiang39`，Profile 默认 `yutianjiang39/yutianjiang39`。两个值都在配置中；生成 Profile 草稿前会实际读取仓库和 README，404 不会被当作已存在。
+账号默认 `yutianjiang39`，Profile 默认 `yutianjiang39/yutianjiang39`。
+两个值都在配置中；生成 Profile 草稿前会实际读取仓库和 README，
+404 不会被当作已存在。
 
 | 设置 | 使用方式 |
 |---|---|
@@ -50,9 +57,12 @@ repo-scout demo --output ./demo-work
 | `audit` | 输入/输出 Token、美元预算、并发、Prompt 版本与 chunk 限额 |
 | `execution` | 默认 Docker；镜像、超时和执行方式可配置 |
 
-`maintainer.trusted_maintainers` 若未单独设置，继承 `tracking.trusted_maintainers`。自定义维护者名单属于操作者的明确身份判断，不能从用户名、组织成员身份或 AI 推测生成。
+`maintainer.trusted_maintainers` 若未单独设置，
+继承 `tracking.trusted_maintainers`。自定义维护者名单属于操作者的明确身份判断，
+不能从用户名、组织成员身份或 AI 推测生成。
 
-密钥通过本机凭证管理或环境变量提供，不写入 YAML、命令历史示例、报告或仓库。首次运行不需要配置所有模型；一个主审角色已经可以产生待独立验证的候选。完整模型字段和成本说明见 [模型配置](api-models.md)。
+密钥通过本机凭证管理或环境变量提供，不写入 YAML、命令历史示例、报告或仓库。
+首次运行不需要配置所有模型；一个主审角色已经可以产生待独立验证的候选。完整模型字段和成本说明见 [模型配置](api-models.md)。
 
 ## 4. 首次真实运行顺序
 
@@ -87,13 +97,18 @@ repo-scout demo --output ./demo-work
 | 跟进已有贡献 | `track`、`watch`、`check-pr`、`check-issues`、`feedback`、`followup-report` |
 | 正式成果与主页 | `accept-issue`、`portfolio`、`portfolio-sync`、`portfolio-preview`、`profile-draft`、`approve-profile`、`profile-publish` |
 
-`verify-ai` 是按当前角色配置重跑审查、复用缓存的入口，不独立授予任何确认状态。`run-contribution` 只为已经获批的 PR 工作准备工作区和待办，不越过测试及最终公开批准。
+`verify-ai` 是按当前角色配置重跑审查、复用缓存的入口，不独立授予任何确认状态。
+`run-contribution` 只为已经获批的 PR 工作准备工作区和待办，
+不越过测试及最终公开批准。
 
 ## 5. 运行复现与回归测试
 
-先检查命令、依赖与它们会执行的脚本，再使用执行器。默认 Docker 不联网、不自动拉取镜像，镜像必须预先准备；上游依赖若尚未装入镜像，测试不能凭空成功，应据实记录环境阻塞。
+先检查命令、依赖与它们会执行的脚本，再使用执行器。默认 Docker 不联网、不自动拉取镜像，
+镜像必须预先准备；上游依赖若尚未装入镜像，测试不能凭空成功，应据实记录环境阻塞。
 
-同一 Finding 的验证和实施工作区分开。基线运行使用当前上游代码；新增复现测试可以作为单独新文件加入，但不能先修改待验证代码再宣称复现。修复后需要执行相同命令，日志、退出码、源码树和 commit 都会留下记录。单纯打印“PASS”或导入一段 JSON 不能代替执行。
+同一 Finding 的验证和实施工作区分开。基线运行使用当前上游代码；新增复现测试可以作为单独新文件加入，
+但不能先修改待验证代码再宣称复现。修复后需要执行相同命令，日志、退出码、源码树和 commit 都会留下记录。
+单纯打印“PASS”或导入一段 JSON 不能代替执行。
 
 例如，检查过脚本且测试依赖已在镜像中就绪后，可运行下列形式；`FINDING-ID` 和测试路径须替换为实际值：
 
@@ -102,11 +117,14 @@ repo-scout --home ./scout-data test FINDING-ID --purpose baseline --reviewed --a
 repo-scout --home ./scout-data test FINDING-ID --purpose regression --reviewed --argv '["python", "-m", "pytest", "tests/test_regression.py"]'
 ```
 
-第二条需在批准后的修复工作区已经完成修改时运行。`--argv` 是 JSON 参数数组，不执行 shell 展开；需要 shell 功能时也必须把解释器作为明确、已审查的命令处理。
+第二条需在批准后的修复工作区已经完成修改时运行。`--argv` 是 JSON 参数数组，
+不执行 shell 展开；需要 shell 功能时也必须把解释器作为明确、已审查的命令处理。
 
 若明确选择在主机执行，子进程仍只得到精简环境，并对输出和记录参数做凭证脱敏；这不等于 OS 沙箱。CI、安装脚本或本机依赖仍需要人工检查。
 
-CC 自动模式需要安装兼容的 `claude` CLI 并提供 `ANTHROPIC_API_KEY`。程序使用单独临时目录、禁用工具和 MCP 的结构化调用，让 CC 针对材料出具报告或补丁。也可在外部独立 CC 会话完成，再明确声明来源导入报告；报告仍须通过 SHA、状态、真实复现与日志完整性检查。
+CC 自动模式需要安装兼容的 `claude` CLI 并提供 `ANTHROPIC_API_KEY`。
+程序使用单独临时目录、禁用工具和 MCP 的结构化调用，让 CC 针对材料出具报告或补丁。
+也可在外部独立 CC 会话完成，再明确声明来源导入报告；报告仍须通过 SHA、状态、真实复现与日志完整性检查。
 
 ## 6. 常见恢复路径
 
@@ -125,22 +143,29 @@ CC 自动模式需要安装兼容的 `claude` CLI 并提供 `ANTHROPIC_API_KEY`�
 
 ## 7. 长期维护节奏
 
-默认跟进间隔为一天，可配置为更长周期；手动同步可用于刚收到 Review 的工作。根据待办推进：补充测试、解释设计、完成批准范围内的修订、等待 Review 或合并。没有新证据时不制造回复，也不为增加数字把一个修复拆成多个贡献。
+默认跟进间隔为一天，可配置为更长周期；手动同步可用于刚收到 Review 的工作。
+根据待办推进：补充测试、解释设计、完成批准范围内的修订、等待 Review 或合并。
+没有新证据时不制造回复，也不为增加数字把一个修复拆成多个贡献。
 
-`watch` 是一次性增量同步，不是后台常驻进程。可以把以下命令交给 cron、systemd timer 或任务计划程序；本次交付没有在用户机器创建任何定时任务：
+`watch` 是一次性增量同步，不是后台常驻进程。可以把以下命令交给 cron、systemd timer 或任务计划程序；
+本次交付没有在用户机器创建任何定时任务：
 
 ```bash
 repo-scout --home ./scout-data watch --once
 ```
 
-刚收到 Review 而需立即检查时使用 `watch --force`。`portfolio-sync` 会强制刷新已跟踪上游并生成本地成果预览；真正发布前仍需要读取真实 Profile 的 `profile-draft`。
+刚收到 Review 而需立即检查时使用 `watch --force`。`portfolio-sync` 会强制刷新已跟踪上游并生成本地成果预览；
+真正发布前仍需要读取真实 Profile 的 `profile-draft`。
 
 长期观察正式贡献数、独立上游项目数、Changes Requested 和待处理项。Repo 活跃度只是寻找合作对象的输入，不能作为个人成果证明。
 
 ## 8. 备份与升级
 
-至少备份工作根目录中的数据库、报告、贡献台账和未提交的 Worktree。数据库开启 WAL，运行中直接只复制主 `.db` 文件可能遗漏 WAL 中的数据；停止程序后复制整个相关目录，或使用 SQLite backup API。审批、原始快照和 Outbox 不能在普通清理中丢弃。
+至少备份工作根目录中的数据库、报告、贡献台账和未提交的 Worktree。数据库开启 WAL，
+运行中直接只复制主 `.db` 文件可能遗漏 WAL 中的数据；停止程序后复制整个相关目录，
+或使用 SQLite backup API。审批、原始快照和 Outbox 不能在普通清理中丢弃。
 
-当前 schema 版本为 1；未知版本拒绝打开。尚未提供旧 Repo Scout 数据库自动迁移器，也没有将多机器共享 SQLite 作为部署方式。已有项目接入时应先做映射和迁移测试。
+当前 schema 版本为 1；未知版本拒绝打开。尚未提供旧 Repo Scout 数据库自动迁移器，
+也没有将多机器共享 SQLite 作为部署方式。已有项目接入时应先做映射和迁移测试。
 
 更完整的覆盖与限制见 [验收映射](acceptance.md)。

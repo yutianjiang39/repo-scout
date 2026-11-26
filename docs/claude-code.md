@@ -1,22 +1,43 @@
 # Claude Code 集成
 
-CC 盲审与比较是证据收集，不等于最终验收。实施和提交使用[本地三审与人工确认](strict-dual-review.md)，网络故障可降为双审。
+代码修复默认由 GPT 独立实施，CC 依[两轮独立实跑协议](strict-dual-review.md)亲自运行基线和修复版测试，
+再与 GPT 交换报告。下述空工具列表的程序入口只能审阅材料，不能算作这一步。
+旧工具支持的网络降级不能免除 GPT 或 CC 的实跑要求。
 
 本程序把候选审查与独立工程验证分开。CC 验证只能针对当前上游 SHA 的代码和实际运行证据作判断；模型返回的 PASS 不会创建测试记录。
 
-自动入口在一个空的临时目录调用已安装的 Claude Code CLI，使用 bare mode、空工具列表和空 MCP 配置，只通过 stdin 输入筛选后的上下文，独立解析 `structured_output` 并执行 Pydantic 校验。它不会读取旧会话，也不会执行仓库中的 hooks、配置或脚本。
+人工首轮 CLI 提示应要求 CC 独立检查诊断、替代修法、兼容性和测试断言，
+主动验证反例并报告异议。仅要求“运行以下命令并汇报结果”不足以完成审阅。退回及重审按 `strict-dual-review.md` 执行。
 
-默认手工模式无需 API Key。先执行 `repo-scout preflight ID` 和 `repo-scout cc-packet ID`，在独立新会话中仅提供返回的 `cc_prompt.txt`。不要提供整个报告目录或工作区。用 `repo-scout validate ID --report blind.json --attest-cc` 导入与上下文哈希匹配的盲审报告；此步骤不会确认 Finding。再执行 `repo-scout cc-compare-packet ID`，按第二份 schema 比较候选判断与盲审证据，用 `repo-scout validate ID --comparison --report comparison.json --attest-cc` 导入。存在分歧时保存两份原始报告并转为待调查。旧版单阶段报告不是盲审报告。
+自动入口在一个空的临时目录调用已安装的 Claude Code CLI，使用 bare mode、空工具列表和空 MCP 配置，
+只通过 stdin 输入筛选后的上下文，独立解析 `structured_output` 并执行 Pydantic 校验。
+它不会读取旧会话，也不会执行仓库中的 hooks、配置或脚本。
 
-修复阶段在已有方案批准后只要求 CC 生成 unified diff，再由程序进行文件范围检查和 Git apply。测试执行和公开写入分别需要检查和内容绑定的批准。
+默认手工模式无需 API Key。先执行 `repo-scout preflight ID` 和 `repo-scout cc-packet ID`，
+在独立新会话中仅提供返回的 `cc_prompt.txt`。不要提供整个报告目录或工作区。
+用 `repo-scout validate ID --report blind.json --attest-cc` 导入与上下文哈希匹配的盲审报告；
+此步骤不会确认 Finding。再执行 `repo-scout cc-compare-packet ID`，
+按第二份 schema 比较候选判断与盲审证据，用 `repo-scout validate ID --comparison --report comparison.json --attest-cc` 导入。
+存在分歧时保存两份原始报告并转为待调查。旧版单阶段报告不是盲审报告。
 
-上下文有固定大小上限；需要更多调用链或依赖证据时应返回 BLOCKED，而不是猜测。外部 Claude Code 会话也能导入报告，但必须由操作人明确 `--attest-cc`，报告会保留 operator-import 来源，不能冒充内置 CLI 实际调用记录。
+旧程序另提供 CC 生成 unified diff、检查文件范围并 Git apply 的实施入口；
+它不是当前默认的 GPT 独立实施流程。测试执行和公开写入分别需要检查和内容绑定的批准。
 
-模型可用性和价格取决于用户自己的账户。`--max-budget-usd` 为 CC 客户端估计，可能与账单不同；还应使用服务商账户额度。没有 CLI 或 API Key 时程序保留任务包并明确报错，绝不伪造验证完成。
+上下文有固定大小上限；需要更多调用链或依赖证据时应返回 BLOCKED，而不是猜测。
+外部 Claude Code 会话也能导入报告，但必须由操作人明确 `--attest-cc`，
+报告会保留 operator-import 来源，不能冒充内置 CLI 实际调用记录。
+
+模型可用性和价格取决于用户自己的账户。`--max-budget-usd` 为 CC 客户端估计，
+可能与账单不同；还应使用服务商账户额度。没有 CLI 或 API Key 时程序保留任务包并明确报错，
+绝不伪造验证完成。
 
 官方依据（本次实现时核对）：
 
-- [Run Claude Code programmatically](https://code.claude.com/docs/en/headless)：`-p`、stdin、bare mode、JSON `structured_output`。
-- [CLI reference](https://code.claude.com/docs/en/cli-reference)：`--tools`、`--disallowedTools`、`--strict-mcp-config`、`--setting-sources`、`--json-schema`、`--max-budget-usd`。
+- [Run Claude Code programmatically](https://code.claude.com/docs/en/headless)：
+  `-p`、stdin、bare mode、JSON `structured_output`。
+- [CLI reference](https://code.claude.com/docs/en/cli-reference)：
+  `--tools`、`--disallowedTools`、`--strict-mcp-config`、`--setting-sources`、`--json-schema`、`--max-budget-usd`。
 
-本机已检查 Claude Code 2.1.302 的 `--version` 和 `--help`。其 bare 模式不会加载订阅登录；API Runner 的真实计费及部署环境的认证仍需联调。手工导入的模型及 CLI 版本是操作者声明，不是供应商认证。
+本机已检查 Claude Code 2.1.302 的 `--version` 和 `--help`。
+其 bare 模式不会加载订阅登录；API Runner 的真实计费及部署环境的认证仍需联调。
+手工导入的模型及 CLI 版本是操作者声明，不是供应商认证。

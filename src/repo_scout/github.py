@@ -3,6 +3,7 @@
 The service layer owns content-bound approval. This module never retries a write:
 after a lost response the caller must reconcile with GitHub before trying again.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -42,7 +43,9 @@ class GitHubError(RuntimeError):
 class GitHubRateLimit(GitHubError):
     def __init__(self, retry_after: float):
         self.retry_after = retry_after
-        super().__init__(f"GitHub rate limited the request; retry after {retry_after:.0f} seconds")
+        super().__init__(
+            f"GitHub rate limited the request; retry after {retry_after:.0f} seconds"
+        )
 
 
 class GitHubAmbiguousWrite(GitHubError):
@@ -69,8 +72,12 @@ class GitHubClient:
         parsed = urlsplit(base_url)
         hosts = trusted_hosts or {"api.github.com"}
         if (
-            parsed.scheme != "https" or parsed.hostname not in hosts
-            or parsed.username or parsed.password or parsed.query or parsed.fragment
+            parsed.scheme != "https"
+            or parsed.hostname not in hosts
+            or parsed.username
+            or parsed.password
+            or parsed.query
+            or parsed.fragment
             or parsed.port not in {None, 443}
         ):
             raise ValueError("GitHub API requires an explicitly trusted HTTPS host")
@@ -88,11 +95,15 @@ class GitHubClient:
         self._cache: dict[str, dict] = {}
         self._request_lock = asyncio.Lock()
         self._client = httpx.AsyncClient(
-            transport=transport, timeout=timeout, follow_redirects=False,
+            transport=transport,
+            timeout=timeout,
+            follow_redirects=False,
             trust_env=False,
         )
         # Separate conditional caches across credentials without persisting keys.
-        self._principal = hashlib.sha256((read_token or "anonymous").encode()).hexdigest()
+        self._principal = hashlib.sha256(
+            (read_token or "anonymous").encode()
+        ).hexdigest()
 
     async def __aenter__(self) -> "GitHubClient":
         return self
@@ -110,9 +121,17 @@ class GitHubClient:
             raise ValueError("Cross-origin GitHub requests are not allowed")
         if urlsplit(path).scheme and not path.startswith("https://"):
             raise ValueError("Only HTTPS GitHub API URLs are permitted")
-        url = path if path.startswith("https://") else self.base_url + "/" + path.lstrip("/")
+        url = (
+            path
+            if path.startswith("https://")
+            else self.base_url + "/" + path.lstrip("/")
+        )
         parsed = urlsplit(url)
-        if (parsed.scheme, parsed.netloc) != self._origin or parsed.username or parsed.password:
+        if (
+            (parsed.scheme, parsed.netloc) != self._origin
+            or parsed.username
+            or parsed.password
+        ):
             raise ValueError("Cross-origin GitHub requests are not allowed")
         if self._base_path and not parsed.path.startswith(self._base_path + "/"):
             raise ValueError("Request escaped configured API root")
@@ -134,7 +153,11 @@ class GitHubClient:
         return headers
 
     def _cache_get(self, key: str) -> dict | None:
-        return self.store.cache_get("github_http", key) if self.store else self._cache.get(key)
+        return (
+            self.store.cache_get("github_http", key)
+            if self.store
+            else self._cache.get(key)
+        )
 
     def _cache_set(self, key: str, value: dict) -> None:
         if self.store:
@@ -145,8 +168,10 @@ class GitHubClient:
     def _rate_delay(self, response: httpx.Response, attempt: int) -> float | None:
         retry = response.headers.get("retry-after")
         if response.status_code == 429 or (
-            response.status_code == 403 and (
-                retry is not None or response.headers.get("x-ratelimit-remaining") == "0"
+            response.status_code == 403
+            and (
+                retry is not None
+                or response.headers.get("x-ratelimit-remaining") == "0"
                 or "rate limit" in response.text.lower()
             )
         ):
@@ -155,38 +180,63 @@ class GitHubClient:
                     return max(0, float(retry))
                 except ValueError:
                     try:
-                        return max(0, parsedate_to_datetime(retry).timestamp() - time.time())
+                        return max(
+                            0, parsedate_to_datetime(retry).timestamp() - time.time()
+                        )
                     except (TypeError, ValueError, OverflowError):
                         pass
             if response.headers.get("x-ratelimit-remaining") == "0":
                 try:
-                    return max(1, float(response.headers["x-ratelimit-reset"]) - time.time() + 1)
+                    return max(
+                        1,
+                        float(response.headers["x-ratelimit-reset"]) - time.time() + 1,
+                    )
                 except (KeyError, ValueError):
                     pass
-            return 60 * (2 ** attempt)
+            return 60 * (2**attempt)
         return None
 
-    async def _read(self, path: str, params: dict | None = None, *, fresh: bool = False,
-                    use_write_token: bool = False) -> dict:
+    async def _read(
+        self,
+        path: str,
+        params: dict | None = None,
+        *,
+        fresh: bool = False,
+        use_write_token: bool = False,
+    ) -> dict:
         url = self._url(path)
-        principal = hashlib.sha256(self.write_token.encode()).hexdigest() if use_write_token and self.write_token else self._principal
-        key = hashlib.sha256(json.dumps(
-            [principal, self.api_version, url, params or {}], sort_keys=True
-        ).encode()).hexdigest()
+        principal = (
+            hashlib.sha256(self.write_token.encode()).hexdigest()
+            if use_write_token and self.write_token
+            else self._principal
+        )
+        key = hashlib.sha256(
+            json.dumps(
+                [principal, self.api_version, url, params or {}], sort_keys=True
+            ).encode()
+        ).hexdigest()
         async with self._request_lock:
             cached = self._cache_get(key)
-            if cached and not fresh and time.time() - cached.get("stored_at", 0) < self.cache_ttl:
+            if (
+                cached
+                and not fresh
+                and time.time() - cached.get("stored_at", 0) < self.cache_ttl
+            ):
                 return copy.deepcopy(cached)
             headers = self._headers(write=use_write_token)
             if cached and cached.get("etag"):
                 headers["If-None-Match"] = cached["etag"]
             for attempt in range(self.retries + 1):
                 try:
-                    response = await self._client.get(url, params=params, headers=headers)
+                    response = await self._client.get(
+                        url, params=params, headers=headers
+                    )
                 except httpx.TransportError:
                     if attempt == self.retries:
-                        raise GitHubError("GitHub read failed after bounded transport retries") from None
-                    await self.sleep(min(2 ** attempt, self.max_wait))
+                        raise GitHubError(
+                            "GitHub read failed after bounded transport retries"
+                        ) from None
+                    await self.sleep(min(2**attempt, self.max_wait))
                     continue
                 if response.status_code == 304 and cached:
                     cached["stored_at"] = time.time()
@@ -199,30 +249,42 @@ class GitHubClient:
                     await self.sleep(delay)
                     continue
                 if response.status_code >= 500 and attempt < self.retries:
-                    await self.sleep(min(2 ** attempt, self.max_wait))
+                    await self.sleep(min(2**attempt, self.max_wait))
                     continue
                 if not response.is_success:
                     # Do not log request headers or server-reflected request content.
-                    raise GitHubError(f"GitHub read failed with HTTP {response.status_code}", status_code=response.status_code)
+                    raise GitHubError(
+                        f"GitHub read failed with HTTP {response.status_code}",
+                        status_code=response.status_code,
+                    )
                 try:
                     data = response.json()
                 except ValueError:
                     raise GitHubError("GitHub returned invalid JSON") from None
                 value = {
-                    "data": data, "etag": response.headers.get("etag"),
-                    "links": dict(response.links), "stored_at": time.time(),
+                    "data": data,
+                    "etag": response.headers.get("etag"),
+                    "links": dict(response.links),
+                    "stored_at": time.time(),
                     "checked_at": utcnow(),
                 }
                 self._cache_set(key, value)
                 return copy.deepcopy(value)
         raise GitHubError("GitHub request did not complete")
 
-    async def get(self, path: str, params: dict | None = None, fresh: bool = False) -> Any:
+    async def get(
+        self, path: str, params: dict | None = None, fresh: bool = False
+    ) -> Any:
         return (await self._read(path, params, fresh=fresh))["data"]
 
     async def paginate(
-        self, path: str, params: dict | None = None, fresh: bool = False,
-        max_pages: int = 10, *, item_key: str | None = None,
+        self,
+        path: str,
+        params: dict | None = None,
+        fresh: bool = False,
+        max_pages: int = 10,
+        *,
+        item_key: str | None = None,
         require_complete: bool = True,
     ) -> list[dict]:
         if max_pages < 1:
@@ -234,7 +296,9 @@ class GitHubClient:
         for _ in range(max_pages):
             page = await self._read(next_path, query, fresh=fresh)
             data = page["data"]
-            items = data.get(item_key, []) if item_key and isinstance(data, dict) else data
+            items = (
+                data.get(item_key, []) if item_key and isinstance(data, dict) else data
+            )
             if not isinstance(items, list):
                 raise GitHubError("Expected a paginated GitHub list")
             results.extend(items)
@@ -245,28 +309,46 @@ class GitHubClient:
             self._url(next_path)
             query = None
         if require_complete:
-            raise GitHubError("GitHub pagination limit reached; incomplete data cannot be treated as complete")
+            raise GitHubError(
+                "GitHub pagination limit reached; incomplete data cannot be treated as complete"
+            )
         return results
 
-    async def _write(self, method: str, path: str, payload: dict, *, authorized: bool) -> Any:
+    async def _write(
+        self, method: str, path: str, payload: dict, *, authorized: bool
+    ) -> Any:
         if authorized is not True:
-            raise PermissionError("A concrete final approval is required before GitHub writes")
+            raise PermissionError(
+                "A concrete final approval is required before GitHub writes"
+            )
         if not self.write_token:
             raise PermissionError("A separate GitHub write token is required")
         url = self._url(path)
         async with self._request_lock:
             try:
-                response = await self._client.request(method, url, json=payload, headers=self._headers(write=True))
+                response = await self._client.request(
+                    method, url, json=payload, headers=self._headers(write=True)
+                )
             except httpx.TransportError:
-                raise GitHubAmbiguousWrite("GitHub write response was lost; reconcile the remote operation before retrying") from None
+                raise GitHubAmbiguousWrite(
+                    "GitHub write response was lost; reconcile the remote operation before retrying"
+                ) from None
             if response.status_code >= 500:
-                raise GitHubAmbiguousWrite("GitHub write returned a server error; reconcile before retrying", status_code=response.status_code)
+                raise GitHubAmbiguousWrite(
+                    "GitHub write returned a server error; reconcile before retrying",
+                    status_code=response.status_code,
+                )
             if not response.is_success:
-                raise GitHubError(f"GitHub write failed with HTTP {response.status_code}", status_code=response.status_code)
+                raise GitHubError(
+                    f"GitHub write failed with HTTP {response.status_code}",
+                    status_code=response.status_code,
+                )
             try:
                 return response.json()
             except ValueError:
-                raise GitHubAmbiguousWrite("GitHub write response could not be decoded; reconcile before retrying") from None
+                raise GitHubAmbiguousWrite(
+                    "GitHub write response could not be decoded; reconcile before retrying"
+                ) from None
 
     async def post(self, path: str, payload: dict, *, authorized: bool = False) -> Any:
         return await self._write("POST", path, payload, authorized=authorized)
@@ -286,10 +368,14 @@ class GitHubClient:
         token = self.write_token if write else self.read_token
         if not token:
             label = "write" if write else "read"
-            raise PermissionError(f"A GitHub {label} token is required to verify authenticated identity")
+            raise PermissionError(
+                f"A GitHub {label} token is required to verify authenticated identity"
+            )
         user = (await self._read("/user", fresh=True, use_write_token=write))["data"]
         if not isinstance(user, dict) or not user.get("login") or not user.get("id"):
-            raise GitHubError("GitHub returned no verifiable authenticated user identity")
+            raise GitHubError(
+                "GitHub returned no verifiable authenticated user identity"
+            )
         return user
 
     async def search_repositories(self, query: str, limit: int = 25) -> list[dict]:
@@ -297,12 +383,20 @@ class GitHubClient:
             raise ValueError("Search limit must be between 1 and 1000")
         result: list[dict] = []
         for page in range(1, (limit + 99) // 100 + 1):
-            data = await self.get("/search/repositories", {
-                "q": query, "sort": "updated", "order": "desc",
-                "per_page": min(limit, 100), "page": page,
-            })
+            data = await self.get(
+                "/search/repositories",
+                {
+                    "q": query,
+                    "sort": "updated",
+                    "order": "desc",
+                    "per_page": min(limit, 100),
+                    "page": page,
+                },
+            )
             if data.get("incomplete_results"):
-                raise GitHubError("GitHub repository search was incomplete; narrow the query and retry")
+                raise GitHubError(
+                    "GitHub repository search was incomplete; narrow the query and retry"
+                )
             items = data.get("items", [])
             result.extend(items)
             if len(items) < min(limit, 100):
@@ -315,19 +409,40 @@ class GitHubClient:
         words = re.findall(r"[\w-]{3,}", title, flags=re.UNICODE)[:6]
         if not words:
             raise ValueError("Duplicate check needs meaningful keywords")
-        results: dict[str, Any] = {"checked_at": utcnow(), "repository": slug, "status": "SEARCHED", "complete": True}
+        results: dict[str, Any] = {
+            "checked_at": utcnow(),
+            "repository": slug,
+            "status": "SEARCHED",
+            "complete": True,
+        }
         for kind, qualifier in (("issues", "is:issue"), ("prs", "is:pr")):
             query = f"repo:{slug} {qualifier} " + " ".join(words)
-            data = await self.get("/search/issues", {"q": query, "per_page": 30}, fresh=True)
-            complete = not data.get("incomplete_results", False) and data.get("total_count", 0) <= 30
+            data = await self.get(
+                "/search/issues", {"q": query, "per_page": 30}, fresh=True
+            )
+            complete = (
+                not data.get("incomplete_results", False)
+                and data.get("total_count", 0) <= 30
+            )
             results["complete"] = results["complete"] and complete
-            results[kind] = [{
-                "number": i["number"], "title": i["title"], "url": i["html_url"],
-                "state": i["state"],
-            } for i in data.get("items", [])]
+            results[kind] = [
+                {
+                    "number": i["number"],
+                    "title": i["title"],
+                    "url": i["html_url"],
+                    "state": i["state"],
+                }
+                for i in data.get("items", [])
+            ]
             results[kind + "_query"] = query
-        results["conclusion"] = "HUMAN_REVIEW_REQUIRED" if results["issues"] or results["prs"] else "NO_KEYWORD_MATCH"
-        results["limitation"] = "Keyword search cannot establish that no semantic duplicate exists."
+        results["conclusion"] = (
+            "HUMAN_REVIEW_REQUIRED"
+            if results["issues"] or results["prs"]
+            else "NO_KEYWORD_MATCH"
+        )
+        results["limitation"] = (
+            "Keyword search cannot establish that no semantic duplicate exists."
+        )
         return results
 
     async def pull_snapshot(self, slug: str, number: int) -> dict:
@@ -338,12 +453,20 @@ class GitHubClient:
         pull = await self.get(f"{prefix}/pulls/{number}", fresh=True)
         snapshot = {
             "pull": pull,
-            "reviews": await self.paginate(f"{prefix}/pulls/{number}/reviews", fresh=True),
-            "comments": await self.paginate(f"{prefix}/issues/{number}/comments", fresh=True),
-            "review_comments": await self.paginate(f"{prefix}/pulls/{number}/comments", fresh=True),
+            "reviews": await self.paginate(
+                f"{prefix}/pulls/{number}/reviews", fresh=True
+            ),
+            "comments": await self.paginate(
+                f"{prefix}/issues/{number}/comments", fresh=True
+            ),
+            "review_comments": await self.paginate(
+                f"{prefix}/pulls/{number}/comments", fresh=True
+            ),
             "checks": {"check_runs": [], "total_count": 0, "available": False},
             "statuses": {"statuses": [], "state": "unknown", "available": False},
-            "checked_at": utcnow(), "complete": True, "errors": [],
+            "checked_at": utcnow(),
+            "complete": True,
+            "errors": [],
         }
         sha = pull.get("head", {}).get("sha")
         head_repo = (pull.get("head", {}).get("repo") or {}).get("full_name", slug)
@@ -358,17 +481,28 @@ class GitHubClient:
             try:
                 if item_key:
                     checks = await self.paginate(path, fresh=True, item_key=item_key)
-                    snapshot[field] = {"check_runs": checks, "total_count": len(checks), "available": True}
+                    snapshot[field] = {
+                        "check_runs": checks,
+                        "total_count": len(checks),
+                        "available": True,
+                    }
                 else:
                     data = await self.get(path, fresh=True)
                     all_statuses = await self.paginate(
-                        f"/repos/{canonical_repository(head_repo)}/commits/{sha}/statuses", fresh=True
+                        f"/repos/{canonical_repository(head_repo)}/commits/{sha}/statuses",
+                        fresh=True,
                     )
-                    snapshot[field] = {**data, "statuses": all_statuses, "available": True}
+                    snapshot[field] = {
+                        **data,
+                        "statuses": all_statuses,
+                        "available": True,
+                    }
             except GitHubError as exc:
                 if exc.status_code not in {403, 404}:
                     raise
-                snapshot["errors"].append(f"{field} unavailable (HTTP {exc.status_code})")
+                snapshot["errors"].append(
+                    f"{field} unavailable (HTTP {exc.status_code})"
+                )
         return snapshot
 
     async def issue_snapshot(self, slug: str, number: int) -> dict:
@@ -380,7 +514,9 @@ class GitHubClient:
         if "pull_request" in issue:
             raise ValueError("The selected issue number is a pull request")
         return {
-            "issue": issue, "comments": await self.paginate(prefix + "/comments", fresh=True),
+            "issue": issue,
+            "comments": await self.paginate(prefix + "/comments", fresh=True),
             "timeline": await self.paginate(prefix + "/timeline", fresh=True),
-            "checked_at": utcnow(), "complete": True,
+            "checked_at": utcnow(),
+            "complete": True,
         }

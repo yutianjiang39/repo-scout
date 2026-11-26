@@ -1,4 +1,20 @@
-# Repo Scout
+# Repo Scout + Review Orchestrator
+
+本仓库有两个独立项目：
+
+| 项目 | 做什么 | 说明 |
+|---|---|---|
+| **Repo Scout**（`src/`） | 巡检开源库，把有证据的 Issue/PR 草稿存进本地待验收队列 | 见下文 |
+| **Review Orchestrator**（`review-orchestrator/`） | 串行盲审流水线：程序负责冻结、测试、变异、取证、晋级，模型只做判断 | [README](review-orchestrator/README.md) |
+
+Review Orchestrator 要点：
+- 每关独立副本、程序先跑测试再调模型，证据封存后才开审；探针由程序重跑核对，越界读取和型号不符直接作废。
+- 复用省时：依赖环境按依赖文件缓存、基线从本地镜像检出、变异测试每版本只跑一次、上游 issue/PR 增量索引（`python -m ro.upstream`）。
+- 所有任务记录登记在 SQLite 总库（`python -m ro.archive`），只存元数据和哈希。
+
+---
+
+## Repo Scout
 
 Repo Scout 帮你留意开源项目里值得修的小问题。它把证据和英文草稿存到本地；你有空时看一眼中文摘要，再决定哪条值得发。
 

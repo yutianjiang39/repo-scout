@@ -21,3 +21,7 @@ sudo .venv/bin/python -m repo_scout.pilot --home /var/lib/repo-scout-pilot revie
 ```
 
 想先在本地体验，可以跑[离线演练](docs/demo.md)。要接着上次的进度做，看[交接记录](docs/handoff.md)；需要完整命令或恢复数据时，再查[运维手册](docs/operations.md)。
+
+## 审阅流水线
+
+[`review-orchestrator/`](review-orchestrator/README.md) 是独立的串行盲审工具：程序负责冻结、测试、变异、取证和晋级，模型只做判断。它不依赖 Repo Scout 的代码，有自己的说明和测试。

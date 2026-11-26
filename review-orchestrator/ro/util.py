@@ -1,0 +1,70 @@
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import stat
+import subprocess
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+class Refused(ValueError):
+    """A gate rule refused the operation."""
+
+
+def need(value, message):
+    if not value:
+        raise Refused(message)
+
+
+def sha(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha_file(path):
+    return sha(Path(path).read_bytes())
+
+
+def dump(value):
+    return json.dumps(value, ensure_ascii=False, indent=2).encode()
+
+
+def git(repo, *args):
+    return subprocess.check_output(["git", "-C", str(repo), *args], stderr=subprocess.PIPE)
+
+
+def git_text(repo, *args):
+    return git(repo, *args).decode(errors="replace").strip()
+
+
+def rmtree(path):
+    def onerror(func, p, _):
+        os.chmod(p, stat.S_IWRITE)
+        func(p)
+
+    if Path(path).exists():
+        shutil.rmtree(path, onerror=onerror)
+
+
+def diff_paths(diff_bytes):
+    out = []
+    for line in diff_bytes.decode(errors="replace").splitlines():
+        if line.startswith("diff --git "):
+            out.append(line.split(" b/", 1)[1] if " b/" in line else line.split()[-1])
+    return out
+
+
+def clone_base(dst, repo, base, tree=None):
+    """Fresh shallow checkout of one commit; LF-preserving; review dirs excluded."""
+    dst = Path(dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    git(dst, "init", "-q")
+    git(dst, "config", "core.autocrlf", "false")
+    with open(dst / ".git" / "info" / "exclude", "a", encoding="utf-8") as fh:
+        fh.write("\n/REVIEW/\n/.review-runs/\n")
+    git(dst, "fetch", "-q", "--depth=1", "--no-tags", Path(repo).as_uri(), base)
+    git(dst, "checkout", "-q", "--detach", "FETCH_HEAD")
+    if tree:
+        need(git_text(dst, "rev-parse", "HEAD^{tree}") == tree, "Wrong tree in fresh checkout")
+    return dst

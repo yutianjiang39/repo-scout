@@ -1,0 +1,22 @@
+{
+  "module": "coinbase",
+  "envs": {
+    "py310": {
+      "python": ["py", "-3.10"],
+      "install": [["{py}", "-m", "pip", "install", "-r", "requirements.txt", "-r", "test_requirements.txt"]]
+    },
+    "py312": {
+      "python": ["py", "-3.12"],
+      "install": [["{py}", "-m", "pip", "install", "-r", "requirements.txt", "-r", "test_requirements.txt"]]
+    }
+  },
+  "focused": [
+    ["{py}", "-m", "unittest", "-v", "tests.websocket.test_websocket_base.WSBaseTest.test_on_message_exception_reaches_checker"]
+  ],
+  "suite": [
+    ["{py}", "-m", "unittest", "discover", "-s", "tests/websocket", "-t", ".", "-v"]
+  ],
+  "baseline_suite": false,
+  "timeout": 1800,
+  "mutation": {"enabled": true, "max": 30, "timeout": 300}
+}

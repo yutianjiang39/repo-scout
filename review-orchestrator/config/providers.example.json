@@ -1,0 +1,39 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "providers": {
+    "vvvvvip": {
+      "env": [
+        "REVIEW_GPT_KEY"
+      ],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://vvvvvip.tststs.shop/v1"
+      },
+      "models": {
+        "gpt-6.2-astra": {
+          "capabilities": {
+            "tools": true
+          }
+        }
+      }
+    },
+    "review-gemini": {
+      "env": [
+        "REVIEW_GEMINI_KEY"
+      ],
+      "package": "@opencode/ai/providers/openai-compatible",
+      "settings": {
+        "baseURL": "https://api.zzshu.cc/v1",
+        "headerTimeout": 900000,
+        "chunkTimeout": 900000
+      },
+      "models": {
+        "gemini-4-neon": {
+          "capabilities": {
+            "tools": true
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,3 @@
+# Check out with the same LF bytes that are committed. review-orchestrator's policy lock
+# hashes protected files byte-for-byte; CRLF conversion on checkout breaks every hash.
+* text=auto eol=lf

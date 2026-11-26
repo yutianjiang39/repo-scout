@@ -1,3 +1,4 @@
 2026-11-26 20:15:11	locked	13 files	用户：可以写进文字，但要保证运行几次以后文字还是这样，不能自行把指令都改了（2026-11-26）
 2026-11-26 20:39:16	restored	pipeline/prompts/operator.md
 2026-11-26 20:41:55	locked	13 files	授权修改operator.md，禁止重定向输出和自动重试
+2026-11-26 22:29:42	restored	repo-scout/AGENTS.md

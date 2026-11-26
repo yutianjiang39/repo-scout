@@ -28,7 +28,14 @@ LOG = POLICY / "events.log"
 
 
 def workspace():
-    return Path(os.environ.get("REVIEW_WORKSPACE", ROOT.parent.parent)).resolve()
+    """Workspace root: the nearest ancestor holding projects/repo-scout (the pipeline lives at
+    <workspace>/projects/repo-scout/review-orchestrator). REVIEW_WORKSPACE overrides."""
+    if os.environ.get("REVIEW_WORKSPACE"):
+        return Path(os.environ["REVIEW_WORKSPACE"]).resolve()
+    for p in ROOT.parents:
+        if (p / "projects" / "repo-scout").is_dir():
+            return p.resolve()
+    return ROOT.parents[2].resolve()
 
 
 def targets():

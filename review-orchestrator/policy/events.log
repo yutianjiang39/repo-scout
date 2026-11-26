@@ -2,3 +2,4 @@
 2026-11-26 20:39:16	restored	pipeline/prompts/operator.md
 2026-11-26 20:41:55	locked	13 files	授权修改operator.md，禁止重定向输出和自动重试
 2026-11-26 22:29:42	restored	repo-scout/AGENTS.md
+2026-11-26 23:19:57	locked	13 files	用户：我授权你全部完成（更新流水线路径为 projects/repo-scout/review-orchestrator、相对路径加一层、repo-scout 分支约定；由 Claude 代为执行 lock，2026-11-26）

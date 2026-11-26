@@ -1,6 +1,8 @@
 # Repo Scout
 
-代码修复的审阅一律走工作区的 `projects/review-orchestrator/`（程序驱动的串行盲审），不要按旧文档手工执行。
+代码修复的审阅一律走本仓库的 `review-orchestrator/`（工作区路径 `projects/repo-scout/review-orchestrator/`，程序驱动的串行盲审），不要按旧文档手工执行。它只有这一份，不要在别处复制。
+
+本仓库的主检出始终停在 `main`。功能开发另开 worktree 和短期分支，合入 main 后把分支和 worktree 一起删除。
 
 开发和执行贡献任务前阅读工作区根目录 `AGENTS.md`。`docs/strict-dual-review.md` 只描述本项目内置的 review_gate 模块，不是操作流程。
 候选分析、单模型报告和草稿都不是授权。模型不得代签审查、代替操作者审批或跳过失败门禁；

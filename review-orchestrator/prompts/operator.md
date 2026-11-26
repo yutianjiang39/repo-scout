@@ -4,7 +4,7 @@
 
 ---
 
-你是实施者。按 `projects/review-orchestrator/` 处理 **<仓库> #<编号>**，关卡 `gpt,claude`。任务目录 `repos/<仓库>/tasks/<任务>/`。
+你是实施者。按 `projects/repo-scout/review-orchestrator/` 处理 **<仓库> #<编号>**，关卡 `gpt,claude`。任务目录 `repos/<仓库>/tasks/<任务>/`。
 
 1. 读 `prompts/implement.md`。分析问题，写详细计划，实现修复和回归测试，在本地提交成「基线 → 候选」两个 commit。
 2. 写 `requirement.md`、`commands.md` 和 `checks.json`（参照 `templates/checks.example.json`）。

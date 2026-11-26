@@ -1,8 +1,8 @@
 {
   "files": {
-    "workspace/AGENTS.md": "21dd6fe3e517d6fa4607fae0f05445ac8e1b54cad4731301ba10fbece71f733a",
+    "workspace/AGENTS.md": "903730e6553349efa36e1203e4fca5c0c4e41b39713ec54a1c8daad24d17970f",
     "workspace/opencode.jsonc": "ad4caf6d9421a178af88b090f0ec93df667a639b72b26532ca635fd24428e672",
-    "repo-scout/AGENTS.md": "49ec81d615c55c1f56fde96aa57506dfc306231dc52001c5a9cd988a5f5fae0c",
+    "repo-scout/AGENTS.md": "e5698dac8e0cb756db1f6dcb484ef12b3c48f6b20ae72fd3417f0a8312e7a471",
     "pipeline/AGENTS.md": "98af7a739bef56dfaf5dca68477b2d81361178fc6e8c1c886d3133b8d6310e7a",
     "pipeline/config/reviewers.json": "5c7e2f1e2499acbc2dc036cefb8f7ce133e567c38191d7b04081f471d9f2a88c",
     "pipeline/capsule/artifact.md": "21fe689feaf2401fcb4f612ce66288a015595cef8cfccb6f6fb66a6caf052233",
@@ -12,8 +12,8 @@
     "pipeline/capsule/report.md": "c9a4e5135832c53475a52ecfbd9ab9a66470c0923482823d35958b682670fee1",
     "pipeline/capsule/stage.md": "dab401d806c950fb5855a55186d14bfd12f5c7f8efb9a391442baf95323c3452",
     "pipeline/prompts/implement.md": "773d9673ca4a3de277645df45239659a58e8e13aa31dd8d4c02967673eca869a",
-    "pipeline/prompts/operator.md": "959911143571dbc3f76b67ba92c498ce3590c7f5c6b33218f2a6620790294b8a"
+    "pipeline/prompts/operator.md": "3bf60520efceeba347f54aaf556240bbdd2e946ca5bbed4cd342acb182fde992"
   },
-  "approved_by": "授权修改operator.md，禁止重定向输出和自动重试",
-  "at": "2026-11-26 20:41:55"
+  "approved_by": "用户：我授权你全部完成（更新流水线路径为 projects/repo-scout/review-orchestrator、相对路径加一层、repo-scout 分支约定；由 Claude 代为执行 lock，2026-11-26）",
+  "at": "2026-11-26 23:19:57"
 }

@@ -47,6 +47,9 @@ def run_focused(dst):
     env.update(PYTHONPATH=os.pathsep.join(paths + ([env["PYTHONPATH"]] if env.get("PYTHONPATH") else [])),
                PYTHONDONTWRITEBYTECODE="1")
     worst = 0
+    for template in checks.get("prepare", []):
+        argv = [x.replace("{py}", py).replace("{work}", str(dst)) for x in template]
+        subprocess.run(argv, cwd=dst, env=env, check=True)
     for template in checks["focused"]:
         argv = [x.replace("{py}", py).replace("{work}", str(dst)) for x in template]
         print("$", subprocess.list2cmdline(argv), flush=True)

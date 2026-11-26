@@ -20,7 +20,7 @@ def validate_checks(data):
             isinstance(x, list) and x and all(isinstance(y, str) for y in x) for x in v
         )
 
-    for k in ("focused", "suite"):
+    for k in ("prepare", "focused", "suite"):
         need(argv_list(k), f"checks.json: {k} must be a list of argv lists")
     need(c.get("focused"), "checks.json: focused commands are required")
     need(isinstance(c.get("envs", {}), dict), "checks.json: envs must be an object")

@@ -49,6 +49,26 @@ def freeze_hash(py):
     return sha(out.replace(b"\r\n", b"\n"))
 
 
+DEP_FILES = ("requirements", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "poetry.lock",
+             "uv.lock", "constraints")
+
+
+def dependency_key(repo, base, spec):
+    """Cache key from dependency files only (path + blob hash) and the env spec.
+
+    Bases that differ only in source code share one env; the package under test is never
+    installed into it (reviewers' copies are put on PYTHONPATH), so sharing is safe.
+    Files named in install commands count too, whatever their name.
+    """
+    named = {x for argv in spec.get("install", []) for x in argv if not x.startswith(("{", "-"))}
+    entries = []
+    for line in git(repo, "ls-tree", "-r", "--full-tree", base).decode(errors="replace").splitlines():
+        meta, path = line.split("\t", 1)
+        if any(k in Path(path).name for k in DEP_FILES) or path in named:
+            entries.append(f"{path} {meta.split()[2]}")
+    return sha(json.dumps(dict(deps=sorted(entries), spec=spec), sort_keys=True).encode())[:16]
+
+
 def build(checks, repo, base, tree, cache, log=print):
     """Build (or reuse) one venv per env spec for this base. Returns {name: Env}."""
     spec_all = checks.get("envs") or {}
@@ -58,7 +78,7 @@ def build(checks, repo, base, tree, cache, log=print):
     cache.mkdir(parents=True, exist_ok=True)
     out = {}
     for name, spec in spec_all.items():
-        key = sha((tree + json.dumps(spec, sort_keys=True)).encode())[:16]
+        key = dependency_key(repo, base, spec)
         d = cache / f"{name}-{key}"
         meta = d / "env.json"
         if meta.is_file():

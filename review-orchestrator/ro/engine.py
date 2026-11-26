@@ -5,6 +5,7 @@ Every gate gets its own fresh runs (results are never shared between reviewers).
 
 import json
 import re
+import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -14,8 +15,7 @@ from . import envs as envmod
 from . import mutation
 from .util import diff_paths, git_text, sha, sha_file
 
-DEP_FILES = ("requirements", "pyproject.toml", "setup.py", "setup.cfg", "Pipfile", "poetry.lock",
-             "uv.lock", "constraints")
+DEP_FILES = envmod.DEP_FILES
 
 
 def junit_summary(path):
@@ -118,8 +118,13 @@ def related_tests(work, code_diff, tests_root="tests"):
     return sorted(hits)
 
 
-def preflight(work, capsule, envs, checks, out_dir, log=print):
-    """Program-run verification for one gate. Returns the evidence dict."""
+def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=None):
+    """Program-run verification for one gate. Returns the evidence dict.
+
+    Baseline/fixed tests always run fresh per gate. Mutation results depend only on the
+    patch, the env and checks.json, so with `mutation_cache` they run once per version
+    and later gates reuse them (each gate still seals its own evidence copy).
+    """
     work, capsule = Path(work), Path(capsule)
     binding = json.loads((capsule / "binding.json").read_text(encoding="utf-8"))
     runner = Runner(out_dir, checks.get("timeout", 1800))
@@ -148,6 +153,11 @@ def preflight(work, capsule, envs, checks, out_dir, log=print):
             continue
         base = envmod.worktree(work, f"baseline-{name}", [capsule / "tests.diff"])
         fixed = envmod.worktree(work, f"fixed-{name}", [capsule / "fix.diff"])
+        prepared = [runner.execute(phase, "prepare", dst, env, checks.get("prepare", []))
+                    for phase, dst in (("baseline", base), ("fixed", fixed))]
+        if any(r["exit"] for group in prepared for r in group):
+            problem(f"checkout preparation failed in {name}")
+            continue
         digest = [{p: sha((d / p).read_bytes()) if (d / p).is_file() else None for p in tests} for d in (base, fixed)]
         ev["tests_identical"][name] = digest[0] == digest[1]
         if checks.get("module"):
@@ -172,8 +182,29 @@ def preflight(work, capsule, envs, checks, out_dir, log=print):
     first = next(iter(envs.values()))
     m = checks.get("mutation", {})
     if m.get("enabled", True) and not ev["problems"]:
-        ev["mutation"] = run_mutants(work, capsule, first, checks, runner, m, log)
+        ev["mutation"] = shared_mutants(work, capsule, first, checks, runner, m, log, mutation_cache, binding)
     return ev
+
+
+def shared_mutants(work, capsule, env, checks, runner, cfg, log, cache, binding):
+    if not cache:
+        return run_mutants(work, capsule, env, checks, runner, cfg, log)
+    key = sha(json.dumps([binding["patch"], env.freeze, checks], sort_keys=True).encode())[:16]
+    d = Path(cache) / key
+    if (d / "result.json").is_file():
+        res = json.loads((d / "result.json").read_text(encoding="utf-8"))
+        shutil.copytree(d / "files", runner.out, dirs_exist_ok=True)
+        log(f"  mutation: reused results computed by {res['computed_by']} (same patch/env/checks)")
+        return dict(res, shared=True)
+    res = run_mutants(work, capsule, env, checks, runner, cfg, log)
+    for r in res.get("mutants", []):
+        for rel in (r["diff"], r["log"]):
+            (d / "files" / rel).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(runner.out / rel, d / "files" / rel)
+    (d / "files").mkdir(parents=True, exist_ok=True)
+    res = dict(res, computed_by=binding["role"], key=key)
+    (d / "result.json").write_text(json.dumps(res, ensure_ascii=False, indent=2), encoding="utf-8")
+    return dict(res, shared=False)
 
 
 def run_mutants(work, capsule, env, checks, runner, cfg, log=print):
@@ -181,6 +212,8 @@ def run_mutants(work, capsule, env, checks, runner, cfg, log=print):
     if not lines:
         return dict(supported=False, reason="no Python lines added by the candidate")
     dst = envmod.worktree(work, "mutation", [capsule / "fix.diff"])
+    if any(r["exit"] for r in runner.execute("mutation", "prepare", dst, env, checks.get("prepare", []))):
+        raise RuntimeError("mutation checkout preparation failed")
     files = {p: ((dst / p).read_bytes(), ls) for p, ls in lines.items() if (dst / p).is_file()}
     mutants, total = mutation.generate(files, cfg.get("max", 30))
     mdir = runner.out / "mutants"
@@ -227,6 +260,8 @@ def verify_probe(work, capsule, env, checks, probe_diff, on, out_dir, name):
         res.update(detected=None, error="probe diff does not apply: " + e.stderr.decode(errors="replace")[-300:])
         return res
     runner = Runner(out_dir, checks.get("timeout", 1800))
+    if any(r["exit"] for r in runner.execute(f"probe-{name}", "prepare", dst, env, checks.get("prepare", []))):
+        return dict(res, detected=None, error="probe checkout preparation failed")
     rs = runner.execute(f"probe-{name}", "focused", dst, env, checks["focused"])
     res.update(detected=any(r["exit"] != 0 and not r["timed_out"] for r in rs), runs=rs)
     return res

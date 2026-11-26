@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -39,7 +40,7 @@ class Base(unittest.TestCase):
         self.db = self.root / "task" / "review.sqlite"
         self.cli = self.fake_cli()
         env = patch.dict(os.environ, {"REVIEW_OPENCODE_BIN": str(self.cli), "REVIEW_CLAUDE_BIN": str(self.cli),
-                                      "FAKE_MODE": "pass"})
+                                      "FAKE_MODE": "pass", "REVIEW_MIRRORS": str(self.root / "mirrors")})
         env.start()
         self.addCleanup(env.stop)
         p = patch("ro.reviewers._environment", lambda role: os.environ.copy())
@@ -92,6 +93,10 @@ class Flow(Base):
         self.assertTrue(ev["mutation"]["supported"])
         self.assertTrue(ev["mutation"]["survived"], "x<=0 should survive (equivalent at 0)")
         self.assertGreater(ev["mutation"]["score"], 0.5)
+        cc = json.loads((self.root / "exp" / s["evidence"]["claude"]["file"]).read_text())
+        self.assertEqual((ev["mutation"]["shared"], cc["mutation"]["shared"]), (False, True))
+        self.assertEqual(cc["mutation"]["survived"], ev["mutation"]["survived"])
+        self.assertTrue(any(r["phase"] == "baseline" for r in cc["runs"]), "tests still re-run per gate")
         gpt_ws = Path(s["workspaces"]["gpt"])
         self.assertFalse((gpt_ws / "REVIEW" / "out").exists(), "PASS gate must be sealed")
         self.assertFalse((gpt_ws / ".review-runs").exists())
@@ -179,6 +184,32 @@ class Enforcement(Base):
         full = dict(base, checks=[dict(criterion="restore", method="read", observed="present")], probe="no backup")
         self.assertEqual(execute(self.db, "report", "gpt", "s1", self.file("r.json", json.dumps(full)))["current"],
                          "deepseek")
+
+    def test_env_cache_key_follows_dependency_files_only(self):
+        from ro.envs import dependency_key
+        spec = {"install": [["{py}", "-m", "pip", "install", "-r", "dev.txt"]]}
+        key = lambda: dependency_key(self.repo, "HEAD", spec)
+        before = key()
+        self.commit({"value.py": FIX + "# source-only change\n"}, "src")
+        self.assertEqual(key(), before, "source-only change must reuse the env")
+        self.commit({"requirements.txt": "attrs\n"}, "deps")
+        after_req = key()
+        self.assertNotEqual(after_req, before)
+        self.commit({"dev.txt": "pytest\n"}, "named install file")
+        self.assertNotEqual(key(), after_req, "files named in install commands count")
+        self.assertNotEqual(dependency_key(self.repo, "HEAD", {"install": []}), key(), "spec counts")
+
+    def test_checkouts_share_one_mirror_without_candidate(self):
+        from ro.util import clone_base, git_text, mirror
+        base = git_text(self.repo, "rev-parse", "HEAD~1")
+        a = clone_base(self.root / "a", self.repo, base)
+        b = clone_base(self.root / "b", self.repo, base)
+        self.assertEqual(git_text(a, "rev-parse", "HEAD"), git_text(b, "rev-parse", "HEAD"))
+        self.assertEqual(len(list((self.root / "mirrors").iterdir())), 1)
+        m = mirror(self.repo, base)
+        tip = git_text(self.repo, "rev-parse", "HEAD")
+        self.assertNotEqual(subprocess.run(["git", "-C", str(m), "cat-file", "-e", tip], capture_output=True)
+                            .returncode, 0, "candidate must never enter the shared mirror")
 
     def test_code_freeze_requires_checks(self):
         with self.assertRaisesRegex(Refused, "checks"):

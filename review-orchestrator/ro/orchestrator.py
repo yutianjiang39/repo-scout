@@ -119,7 +119,8 @@ class Task:
         if s["kind"] == "code":
             out = evidence.store_dir(self.dir, n, role, attempt)
             self.log(f"[{role}] preflight (program-run tests, mutants)")
-            ev = engine.preflight(work, work / "REVIEW", self.envs(), self.checks(), out, self.log)
+            ev = engine.preflight(work, work / "REVIEW", self.envs(), self.checks(), out, self.log,
+                                  mutation_cache=self.dir / "mutation" / f"v{n}")
             s = self.gate("attach", role, evidence.write(ev, out))
             if s["phase"] == "blocked":
                 self.log(f"[{role}] BLOCKED before review: {ev['problems']}  evidence={out}")

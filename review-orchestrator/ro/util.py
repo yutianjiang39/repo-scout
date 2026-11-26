@@ -55,15 +55,38 @@ def diff_paths(diff_bytes):
     return out
 
 
+def mirrors_dir():
+    return Path(os.environ.get("REVIEW_MIRRORS", ROOT / ".cache" / "mirrors")).resolve()
+
+
+def mirror(repo, base):
+    """Per-repository bare mirror holding `base`; fetched once, reused by every gate and version."""
+    repo = Path(repo).resolve()
+    m = mirrors_dir() / (repo.name + "-" + sha(str(repo).encode())[:8] + ".git")
+    if not m.is_dir():
+        m.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.check_output(["git", "init", "-q", "--bare", str(m)], stderr=subprocess.PIPE)
+    if subprocess.run(["git", "-C", str(m), "cat-file", "-e", base + "^{commit}"],
+                      capture_output=True).returncode:
+        git(m, "fetch", "-q", "--no-tags", repo.as_uri(), base)
+    return m
+
+
 def clone_base(dst, repo, base, tree=None):
-    """Fresh shallow checkout of one commit; LF-preserving; review dirs excluded."""
+    """Fresh checkout of one commit; LF-preserving; review dirs excluded.
+
+    Objects come from a shared local mirror (alternates, nothing copied); the checkout itself is
+    new and private to this workspace, so isolation is unchanged.
+    """
     dst = Path(dst)
     dst.mkdir(parents=True, exist_ok=True)
     git(dst, "init", "-q")
     git(dst, "config", "core.autocrlf", "false")
     with open(dst / ".git" / "info" / "exclude", "a", encoding="utf-8") as fh:
         fh.write("\n/REVIEW/\n/.review-runs/\n")
-    git(dst, "fetch", "-q", "--depth=1", "--no-tags", Path(repo).as_uri(), base)
+    src = mirror(repo, base)
+    (dst / ".git" / "objects" / "info" / "alternates").write_text(str(src / "objects") + "\n", encoding="utf-8")
+    git(dst, "fetch", "-q", "--no-tags", src.as_uri(), base)
     git(dst, "checkout", "-q", "--detach", "FETCH_HEAD")
     if tree:
         need(git_text(dst, "rev-parse", "HEAD^{tree}") == tree, "Wrong tree in fresh checkout")

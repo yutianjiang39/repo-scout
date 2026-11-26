@@ -20,7 +20,7 @@
 | 模型回执：CLI 报告的实际型号与配置不符 → 作废 | 程序 | `evidence.observed_models` |
 | 关卡顺序、必经关、补丁变化后旧 PASS 作废、盲审输入变更需注明理由 | 程序 | `ro/gates.py` |
 | PASS 后封存本关材料，后续关卡在磁盘上拿不到 | 程序 | `evidence.seal` |
-| Claude 文件工具限制在工作目录内（`--restricted`），不加载用户/项目设置 | 程序 | `ro/reviewers.py` |
+| 工具预授权（`--allowedTools`），不额外请求文件工具限制或设置隔离 | 程序 | `ro/reviewers.py` |
 | 根因、修复正确性、兼容性、证据解读、回归风险 | **模型** | 报告文本字段 |
 | 每个存活变异是等价、无关还是**测试缺口** | **模型** | `mutants[]` |
 | 设计有代表性的错误实现 | **模型** | `harness.py probe-*` |
@@ -68,6 +68,8 @@ python orchestrate.py --db <任务目录>/review.sqlite --work-root <仓库>/tmp
 
 退出码：0 全部 PASS，1 BLOCKED，2 关卡中断，3 REVISE（异议在 `handoff/`）。
 
+运行中每一步都实时打印：`[claude] 03:12 tool read REVIEW/fix.diff`、`API retry 4/9 (502)`；无事件时每 60 秒打一行心跳。模型连续 600 秒没有进展（API 重试不算进展）就中止该关并记为 BLOCKED，原因写明，可用 `--stall <秒>` 调整。同一仓库（`repos/<仓库>/tasks/`）同时只允许一个 orchestrate.py 运行，第二个会被拒绝并显示占用者。
+
 ```text
 orchestrate.py ... recheck <角色> <反证.md>   # 补丁不变、只有证据分歧：回原会话复核，撤回则继续晋级
 orchestrate.py ... final <PR正文.md>         # 交叉终审（默认并行），全部通过后进入 ready
@@ -111,7 +113,7 @@ python -m ro.archive --db <records.sqlite> verify             # 文件被改或�
 
 ## 边界
 
-- 隔离靠三层：独立副本加封存（物理上拿不到）、Claude 的 `--restricted`（文件工具出不了工作目录）、转录审计（事后发现并作废）。Bash 本身不是沙箱，需要系统级隔离时请用独立账号或容器运行 CLI。容器 runner 预留在 `ro/envs.py` 的 `Env` 接口上，本机没有 Docker，还没有实现。
+- 隔离靠两层：独立副本加封存（物理上拿不到）、转录审计（事后发现并作废）。不传 `--restricted`，Claude 的文件工具不受工作目录约束；需要系统级隔离时请用独立账号或容器运行 CLI。容器 runner 预留在 `ro/envs.py` 的 `Env` 接口上，本机没有 Docker，还没有实现。
 - 变异目前只支持 Python。非 Python 改动会记为 `supported: false`，审阅者自己设计的探针仍是必需的。
 - 覆盖率分析还没有接入。
 

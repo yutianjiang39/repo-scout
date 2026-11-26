@@ -16,9 +16,11 @@ from pathlib import Path
 import sqlite3
 import subprocess
 import sys
+import threading
+import time
 
 from ro.orchestrator import Task
-from ro.util import ROOT, Refused
+from ro.util import ROOT, Refused, utf8_stdio
 
 
 def main():
@@ -26,7 +28,9 @@ def main():
     p.add_argument("--db", type=Path, required=True, help="task ledger (one per task; its folder holds evidence)")
     p.add_argument("--work-root", type=Path, help="where reviewer workspaces go (outside the repo)")
     p.add_argument("--cache", type=Path, default=ROOT / ".cache" / "envs")
-    p.add_argument("--timeout", type=int, help="seconds per reviewer CLI (default none; Gemini can be slow)")
+    p.add_argument("--timeout", type=int, help="total seconds per reviewer CLI (default none)")
+    p.add_argument("--stall", type=int, help="abort a reviewer CLI after this many seconds without model "
+                   "progress; API retries do not count (default 600, env REVIEW_STALL)")
     sub = p.add_subparsers(dest="cmd", required=True)
     st = sub.add_parser("start")
     for k in ("repo", "base", "tip", "requirement", "commands", "checks", "implementer"):
@@ -44,10 +48,30 @@ def main():
     f.add_argument("--serial", action="store_true")
     sub.add_parser("status")
     a = p.parse_args()
+    utf8_stdio()
+    a.db.resolve().parent.mkdir(parents=True, exist_ok=True)
+    runlog = a.db.resolve().parent / "run.log"
+    lock = threading.Lock()
+
+    def log(m):
+        with lock:
+            if a.cmd == "status":
+                print(m, flush=True)
+                return
+            line = f"{time.strftime('%H:%M:%S')} {m}"
+            print(line, flush=True)
+            with runlog.open("a", encoding="utf-8") as fh:
+                fh.write(line + "\n")
+
+    if a.cmd != "status":
+        log(f"=== {a.cmd} {time.strftime('%Y-%m-%d')} (also streamed here; no need to redirect output)")
     from ro import policy
-    policy.enforce(lambda m: print(m, flush=True))
-    t = Task(a.db, a.work_root, a.cache, a.timeout, log=lambda m: print(m, flush=True))
+    policy.enforce(log)
+    t = Task(a.db, a.work_root, a.cache, a.timeout, log=log, stall=a.stall)
     try:
+        if a.cmd != "status":
+            from ro import runlock
+            held = runlock.acquire(a.db, a.cmd)  # noqa: F841  (released when the process exits)
         if a.cmd == "start":
             code = t.start(a.repo, a.base, a.tip, a.requirement, a.commands, a.checks, a.implementer,
                            a.tests, a.gates, a.input_change)

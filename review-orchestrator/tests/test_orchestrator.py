@@ -103,6 +103,30 @@ class Flow(Base):
         self.assertEqual(self.task().final(self.file("pr.md", "fix: abs")), 0, "\n".join(self.logs))
         self.assertEqual(self.state()["phase"], "ready")
 
+    def test_stalled_reviewer_aborted_with_progress_lines(self):
+        os.environ["FAKE_MODE"] = "hang"
+        t = self.task()
+        t.stall = 3
+        self.assertEqual(t.start(str(self.repo), "HEAD~1", "HEAD", self.req, self.cmd, self.checks, "impl-1",
+                                 ["check.py"], "gpt,claude"), 1)
+        log = "\n".join(self.logs)
+        self.assertIn("API retry 1/9 (502)", log)
+        self.assertIn("ABORT: no model progress for 3s", log)
+        self.assertIn("BLOCKED: reviewer CLI aborted", log)
+        self.assertEqual(self.state()["phase"], "blocked")
+
+    def test_one_run_per_repository(self):
+        from ro import runlock
+        tasks = self.root / "repos" / "petl" / "tasks"
+        held = runlock.acquire(tasks / "new-round" / "review.sqlite", "start")
+        self.addCleanup(held.close)
+        other = tasks / "old-round" / "review.sqlite"
+        with self.assertRaises(Refused) as e:
+            runlock.acquire(other, "run")
+        self.assertIn("task new-round (start", str(e.exception))
+        held.close()
+        runlock.acquire(other, "run").close()
+
     def test_skipped_optional_gates_are_never_started(self):
         self.start()
         self.assertNotIn("deepseek", self.state()["workspaces"])

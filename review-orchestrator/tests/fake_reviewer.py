@@ -24,6 +24,12 @@ elif "/" in base_model:
 else:
     receipt = {"modelUsage": {base_model: {}}}
 print(json.dumps(dict(type="system", session_id=session, sessionID=session, **receipt)))
+if mode == "hang":  # API never answers: only retry events, no model progress
+    import time
+    for i in range(1, 100):
+        print(json.dumps(dict(type="system", subtype="api_retry", attempt=i, max_retries=9, error_status=502)),
+              flush=True)
+        time.sleep(0.5)
 if mode == "peek":
     print(json.dumps(dict(type="tool", input=os.environ["FAKE_PEEK"])))
 

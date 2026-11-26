@@ -28,14 +28,18 @@ PROMPT_RECHECK = (
 
 
 class Task:
-    def __init__(self, db, work_root=None, cache=None, timeout=None, log=print):
+    def __init__(self, db, work_root=None, cache=None, timeout=None, log=print, stall=None):
         self.db = Path(db).resolve()
         self.dir = self.db.parent
         self.dir.mkdir(parents=True, exist_ok=True)
         self.work_root = Path(work_root).resolve() if work_root else None
         self.cache = Path(cache or ROOT / ".cache" / "envs")
         self.timeout = timeout
+        self.stall = stall
         self.log = log
+
+    def _cli(self):
+        return dict(timeout=self.timeout, stall=self.stall, log=self.log)
 
     # ------------------------------------------------------------ ledger access
     def gate(self, cmd, *args):
@@ -113,6 +117,7 @@ class Task:
             tempfile.tempdir = old
 
     def first_gate(self, role):
+        self.log(f"[{role}] preparing a fresh workspace (base checkout + sealed capsule)")
         s = self._prepare(role)
         n, attempt, work = s["version"], s["attempt"], Path(s["workspaces"][role])
         self.log(f"[{role}] gate {s['gates'].index(role) + 1}/{len(s['gates'])}  workspace {work}")
@@ -128,7 +133,7 @@ class Task:
             evidence.publish_copy(out, work)
         tdir = evidence.store_dir(self.dir, n, role, attempt, "transcripts")
         self.log(f"[{role}] reviewer CLI running ({config.model(role)})", )
-        res = run_cli(role, work, tdir, timeout=self.timeout)
+        res = run_cli(role, work, tdir, **self._cli())
         return self._record(role, work, res, tdir, "report", s["kind"] == "code")
 
     def post(self, role, work, res, tdir, code):
@@ -172,11 +177,14 @@ class Task:
         return tdir / "report.json"
 
     def _record(self, role, work, res, tdir, cmd, code):
+        self.log(f"[{role}] post-checks: isolation audit, model receipt, probe re-runs")
         post, post_path = self.post(role, work, res, tdir, code)
         report = self._report_file(res, tdir, work / "REVIEW" / "out" / "report.json")
         reason = None
         if post["violations"]:
             reason = "; ".join(post["violations"])
+        elif res.get("abort"):
+            reason = f"reviewer CLI aborted: {res['abort']}"
         elif not report:
             reason = f"no report JSON (CLI exit {res['exit']})"
         elif not res["session"]:
@@ -231,7 +239,7 @@ class Task:
         (work / "REVIEW" / "out" / "report.json").unlink(missing_ok=True)
         tdir = evidence.store_dir(self.dir, s["version"], role, s["attempts"][role], "transcripts") / "recheck"
         res = run_cli(role, work, tdir, final=True, session=s["sessions"][role], prompt=PROMPT_RECHECK,
-                      timeout=self.timeout)
+                      **self._cli())
         return self._record(role, work, res, tdir, "recheck", s["kind"] == "code")
 
     # ------------------------------------------------------------ final round
@@ -248,7 +256,7 @@ class Task:
             folder = f"REVIEW/final/{st['body']}"
             tdir = evidence.store_dir(self.dir, st["version"], role, st["attempts"][role], "transcripts") / f"final-{st['body'][:8]}"
             results[role] = (work, folder, tdir, run_cli(role, work, tdir, final=True, session=st["sessions"][role],
-                                                          folder=folder, timeout=self.timeout))
+                                                          folder=folder, **self._cli()))
 
         if serial:
             for r in roles:

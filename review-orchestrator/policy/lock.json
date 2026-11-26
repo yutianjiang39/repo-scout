@@ -12,8 +12,8 @@
     "pipeline/capsule/report.md": "c9a4e5135832c53475a52ecfbd9ab9a66470c0923482823d35958b682670fee1",
     "pipeline/capsule/stage.md": "dab401d806c950fb5855a55186d14bfd12f5c7f8efb9a391442baf95323c3452",
     "pipeline/prompts/implement.md": "773d9673ca4a3de277645df45239659a58e8e13aa31dd8d4c02967673eca869a",
-    "pipeline/prompts/operator.md": "6d3ea58af753e11a564c28a1e937ebdac06ba13fbe475576daa5bcf9d3e229ee"
+    "pipeline/prompts/operator.md": "959911143571dbc3f76b67ba92c498ce3590c7f5c6b33218f2a6620790294b8a"
   },
-  "approved_by": "用户：可以写进文字，但要保证运行几次以后文字还是这样，不能自行把指令都改了（2026-11-26）",
-  "at": "2026-11-26 20:15:11"
+  "approved_by": "授权修改operator.md，禁止重定向输出和自动重试",
+  "at": "2026-11-26 20:41:55"
 }

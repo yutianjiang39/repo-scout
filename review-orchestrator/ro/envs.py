@@ -9,8 +9,9 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
-from .util import clone_base, git, need, rmtree, sha
+from .util import clone_base, git, heartbeat, need, rmtree, sha
 
 
 class Env:
@@ -89,24 +90,32 @@ def build(checks, repo, base, tree, cache, log=print):
                 raise RuntimeError(f"cached env {d} was modified; delete it and rerun")
             log(f"env {name}: reuse {d}")
         else:
+            t0 = time.monotonic()
+            log(f"env {name}: no cached env for these dependency files, building {d.name}")
             rmtree(d)
             d.mkdir(parents=True)
+            log(f"env {name}: checkout base {base[:10]}")
             src = clone_base(d / "src", repo, base, tree)
+            log(f"env {name}: create venv")
             pip_env = dict(os.environ, PIP_CACHE_DIR=str(cache / "pip-cache"), PIP_DISABLE_PIP_VERSION_CHECK="1")
             with (d / "build.log").open("wb") as fh:
                 subprocess.run([*spec.get("python", [sys.executable]), "-m", "venv", str(d / "venv")],
                                check=True, stdout=fh, stderr=subprocess.STDOUT)
                 py = venv_python(d / "venv")
-                for argv in spec.get("install", []):
+                installs = spec.get("install", [])
+                for k, argv in enumerate(installs, 1):
                     argv = [x.replace("{py}", py).replace("{src}", str(src)) for x in argv]
+                    log(f"env {name}: install {k}/{len(installs)}: {' '.join(argv[3:] or argv)[:100]}")
                     fh.write(("$ " + subprocess.list2cmdline(argv) + "\n").encode())
                     fh.flush()
-                    if subprocess.run(argv, cwd=src, env=pip_env, stdout=fh, stderr=subprocess.STDOUT).returncode:
+                    with heartbeat(log, f"env {name} install {k}/{len(installs)}"):
+                        rc = subprocess.run(argv, cwd=src, env=pip_env, stdout=fh, stderr=subprocess.STDOUT).returncode
+                    if rc:
                         raise RuntimeError(f"env {name}: install failed, see {d / 'build.log'}")
             rmtree(src)  # base sources must never shadow a reviewer's copy
             env = Env(name, py, "venv", freeze_hash(py))
             meta.write_text(json.dumps(dict(env.as_dict(), key=key, spec=spec, base=base), indent=2), encoding="utf-8")
-            log(f"env {name}: built {d}")
+            log(f"env {name}: built {d} in {int(time.monotonic() - t0)}s")
         out[name] = env
     return out
 

@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import os
@@ -5,8 +6,43 @@ from pathlib import Path
 import shutil
 import stat
 import subprocess
+import threading
+import time
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def utf8_stdio():
+    """Entry points write UTF-8 even when piped (OpenCode, CI, logs decode UTF-8; Windows pipes
+    default to the ANSI code page, which garbles non-ASCII paths). A real console is unaffected:
+    Python writes it through the wide-char API. Unencodable text never crashes a run."""
+    import sys
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
+@contextlib.contextmanager
+def heartbeat(log, label, every=30):
+    """Log '... <label> still running, Ns' every `every` seconds while the block runs."""
+    if not log:
+        yield
+        return
+    done, t0 = threading.Event(), time.monotonic()
+
+    def beat():
+        while not done.wait(every):
+            log(f"    ... {label} still running, {int(time.monotonic() - t0)}s")
+
+    t = threading.Thread(target=beat, daemon=True)
+    t.start()
+    try:
+        yield
+    finally:
+        done.set()
+        t.join()
 
 
 class Refused(ValueError):

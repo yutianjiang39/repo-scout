@@ -11,7 +11,7 @@ import subprocess
 
 from ro import config
 from ro.gates import COMMANDS, execute
-from ro.util import Refused
+from ro.util import Refused, utf8_stdio
 
 MODELS = {r: config.model(r) for r in config.roles()}
 
@@ -22,6 +22,7 @@ def main():
     p.add_argument("command", choices=COMMANDS)
     p.add_argument("args", nargs=argparse.REMAINDER)
     a = p.parse_args()
+    utf8_stdio()
     from ro import policy
     policy.enforce()
     a.db.parent.mkdir(parents=True, exist_ok=True)

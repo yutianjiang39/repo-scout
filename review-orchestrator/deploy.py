@@ -5,10 +5,12 @@ import shutil
 import subprocess
 import sys
 from ro.deployment import ROOT, PRIVATE, binary, environment
+from ro.util import utf8_stdio
 from gate import MODELS
 
 
 def main():
+    utf8_stdio()
     if not PRIVATE.is_file():
         sys.exit(
             "BLOCKED: private/credentials.json missing. Copy the complete private folder, not a Git clone."
@@ -27,7 +29,7 @@ def main():
             if not (env.get("ANTHROPIC_AUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")):
                 sys.exit("BLOCKED: Claude credential missing")
             args = [exe, "--help"]
-            markers = ["--effort", "--model", "--resume", "--restricted", "--tools"]
+            markers = ["--effort", "--model", "--resume", "--allowedTools"]
         else:
             if role != "deepseek" and not env.get(
                 "REVIEW_GPT_KEY" if role == "gpt" else "REVIEW_GEMINI_KEY"

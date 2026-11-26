@@ -4,6 +4,7 @@ Every gate gets its own fresh runs (results are never shared between reviewers).
 """
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -13,7 +14,21 @@ from pathlib import Path
 
 from . import envs as envmod
 from . import mutation
-from .util import diff_paths, git_text, sha, sha_file
+from .util import diff_paths, git_text, heartbeat, sha, sha_file
+
+
+def outcome(r):
+    """'exit=0 (12 passed, 3.4s)' from one run record."""
+    counts = r.get("junit") or r.get("unittest") or {}
+    bits = []
+    for k in ("passed", "ran", "failed", "failures", "errors", "skipped"):
+        v = counts.get(k)
+        n = len(v) if isinstance(v, list) else v
+        if n:
+            bits.append(f"{n} {k}")
+    bits.append(f"{r['seconds']}s")
+    return f"exit={r['exit']}{' TIMEOUT' if r['timed_out'] else ''} ({', '.join(bits)})"
+
 
 DEP_FILES = envmod.DEP_FILES
 
@@ -56,6 +71,7 @@ class Runner:
         self.logs.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self.runs = []
+        self.log = None  # set by preflight: announce each command and heartbeat while it runs
 
     def execute(self, phase, kind, dst, env, cmds, timeout=None, record=True):
         results = []
@@ -71,7 +87,10 @@ class Runner:
             junit.unlink(missing_ok=True)
             local_junit.unlink(missing_ok=True)
             start, timed_out = time.time(), False
-            with log.open("wb") as fh:
+            label = f"{phase} {env.name} {kind}" + (f"[{i + 1}/{len(cmds)}]" if len(cmds) > 1 else "")
+            if self.log and record:
+                self.log(f"  > {label}: {' '.join(Path(x).name if os.sep in x else x for x in argv[:6])[:100]}")
+            with log.open("wb") as fh, heartbeat(self.log, label):
                 fh.write(("$ " + subprocess.list2cmdline(argv) + "\n").encode())
                 fh.flush()
                 try:
@@ -128,6 +147,7 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
     work, capsule = Path(work), Path(capsule)
     binding = json.loads((capsule / "binding.json").read_text(encoding="utf-8"))
     runner = Runner(out_dir, checks.get("timeout", 1800))
+    runner.log = log
     ev = dict(attempt=binding["attempt"], patch=binding["patch"], role=binding["role"],
               base=binding["base"], tree=binding["tree"], runs=runner.runs, problems=[])
 
@@ -135,6 +155,7 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
         ev["problems"].append(msg)
         log("  problem: " + msg)
 
+    log("  step 1: verify the review copy matches the frozen capsule")
     head = git_text(work, "rev-parse", "HEAD")
     tree = git_text(work, "rev-parse", "HEAD^{tree}")
     ev["verify"] = dict(head=head, tree=tree, patch=sha_file(capsule / "fix.diff"),
@@ -151,6 +172,7 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
         if not env.intact():
             problem(f"shared env {name} changed since build")
             continue
+        log(f"  step 2: checkouts for {name} (baseline+tests, fixed)")
         base = envmod.worktree(work, f"baseline-{name}", [capsule / "tests.diff"])
         fixed = envmod.worktree(work, f"fixed-{name}", [capsule / "fix.diff"])
         prepared = [runner.execute(phase, "prepare", dst, env, checks.get("prepare", []))
@@ -161,6 +183,7 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
         digest = [{p: sha((d / p).read_bytes()) if (d / p).is_file() else None for p in tests} for d in (base, fixed)]
         ev["tests_identical"][name] = digest[0] == digest[1]
         if checks.get("module"):
+            log(f"  step 3: import check: {checks['module']} must load from the review copy")
             o = [envmod.import_origin(env, checks["module"], d) for d in (base, fixed)]
             ev["import_origin"][name] = dict(baseline=o[0], fixed=o[1], ok=o[0]["ok"] and o[1]["ok"])
             if not ev["import_origin"][name]["ok"]:
@@ -168,9 +191,9 @@ def preflight(work, capsule, envs, checks, out_dir, log=print, mutation_cache=No
                 continue
         for phase, dst in (("baseline", base), ("fixed", fixed)):
             for r in runner.execute(phase, "focused", dst, env, checks["focused"]):
-                log(f"  {phase:<9}{name:<8} focused exit={r['exit']}")
+                log(f"  {phase:<9}{name:<8} focused {outcome(r)}")
         for r in runner.execute("fixed", "suite", fixed, env, checks.get("suite", [])):
-            log(f"  fixed    {name:<8} suite   exit={r['exit']}")
+            log(f"  fixed    {name:<8} suite   {outcome(r)}")
         if checks.get("baseline_suite"):
             runner.execute("baseline", "suite", base, env, checks.get("suite", []))
     for name in envs:
@@ -216,6 +239,7 @@ def run_mutants(work, capsule, env, checks, runner, cfg, log=print):
         raise RuntimeError("mutation checkout preparation failed")
     files = {p: ((dst / p).read_bytes(), ls) for p, ls in lines.items() if (dst / p).is_file()}
     mutants, total = mutation.generate(files, cfg.get("max", 30))
+    log(f"  mutation: {len(mutants)} mutants to run ({total} generated) on added lines")
     mdir = runner.out / "mutants"
     mdir.mkdir(exist_ok=True)
     results = []
@@ -235,6 +259,8 @@ def run_mutants(work, capsule, env, checks, runner, cfg, log=print):
         results.append(dict({k: m[k] for k in ("id", "file", "line", "operator", "original", "replacement")},
                             status=status, diff=f"mutants/{m['id']}.diff",
                             log=rs[0]["log"], exit=rs[0]["exit"]))
+        log(f"    mutant {len(results)}/{len(mutants)} {m['id']} {m['file']}:{m['line']} "
+            f"{m['operator']} -> {status} ({sum(r['seconds'] for r in rs):.1f}s)")
     survived = [r["id"] for r in results if r["status"] == "survived"]
     killed = sum(r["status"] != "survived" for r in results)
     log(f"  mutation: {len(results)} mutants ({total} generated), {killed} killed, survivors={survived}")

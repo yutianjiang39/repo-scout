@@ -8,6 +8,8 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import threading
+import time
 import uuid
 
 from . import config
@@ -47,9 +49,7 @@ class Claude:
         session = session or str(uuid.uuid4())
         cmd = [exe, "-p", prompt, "--model", cfg["model"], "--effort", cfg.get("effort", "medium"),
                "--output-format", "stream-json", "--verbose",
-               # --restricted confines file tools to the working directory and ignores
-               # user/project settings; Bash is re-enabled explicitly via --tools.
-               "--restricted", "--tools", self.TOOLS, "--allowedTools", self.TOOLS,
+               "--allowedTools", self.TOOLS,
                "--strict-mcp-config", "--resume" if final else "--session-id", session]
         cmd += cfg.get("extra_args", [])
         return cmd, session
@@ -110,8 +110,78 @@ def find_report(text):
     return found
 
 
-def run_cli(role, work, transcript_dir, final=False, session=None, folder=None, timeout=None, prompt=None):
-    """final=True resumes the reviewer's own session (final round or recheck)."""
+STALL = int(os.environ.get("REVIEW_STALL", "600"))  # seconds without model progress -> abort
+HEARTBEAT = 60
+PATH_KEYS = ("file_path", "filePath", "path", "pattern", "command", "url")
+
+
+def _brief(value, n=90):
+    s = " ".join(str(value).split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _tool(name, args):
+    args = args if isinstance(args, dict) else {}
+    arg = next((args[k] for k in PATH_KEYS if args.get(k)), "")
+    return f"tool {name} {_brief(arg)}".rstrip()
+
+
+def describe(obj):
+    """One progress line per CLI event, or None. Returns (text, is_progress)."""
+    t = obj.get("type")
+    if t == "system" and obj.get("subtype") == "api_retry":
+        why = obj.get("error_status") or obj.get("error") or "?"
+        return f"API retry {obj.get('attempt')}/{obj.get('max_retries')} ({why})", False
+    if t == "retry":  # opencode
+        err = obj.get("error") or {}
+        return f"API retry {obj.get('attempt')} ({_brief(err.get('message') or err.get('type'), 60)})", False
+    if t == "system" and obj.get("subtype") == "init":
+        return f"session {obj.get('session_id')} started, waiting for model", False
+    if t == "assistant":  # claude stream-json
+        out = []
+        for c in (obj.get("message") or {}).get("content") or []:
+            if c.get("type") == "tool_use":
+                out.append(_tool(c.get("name"), c.get("input")))
+            elif c.get("type") == "text" and c.get("text", "").strip():
+                out.append("says: " + _brief(c["text"]))
+            elif c.get("type") == "thinking":
+                out.append("thinking")
+        return ("; ".join(out) or "model step"), True
+    if t == "user":
+        return None, True  # tool results: progress, no line
+    if t == "result":
+        cost, bits = obj.get("total_cost_usd"), []
+        if obj.get("subtype"):
+            bits.append(str(obj["subtype"]))
+        if obj.get("num_turns"):
+            bits.append(f"{obj['num_turns']} turns")
+        if isinstance(cost, (int, float)):
+            bits.append(f"${cost:.2f}")
+        return "model finished" + (f": {', '.join(bits)}" if bits else ""), True
+    part = obj.get("part") or {}
+    if t == "tool_use":  # opencode
+        return _tool(part.get("tool"), (part.get("state") or {}).get("input")), True
+    if t == "text" and part.get("text", "").strip():
+        return "says: " + _brief(part["text"]), True
+    if t in ("step_start", "step_finish", "reasoning"):
+        return None, True
+    if t == "error":
+        return "error: " + _brief(obj.get("error") or obj), False
+    return None, False
+
+
+def _kill(proc):
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True)
+    proc.kill()
+
+
+def run_cli(role, work, transcript_dir, final=False, session=None, folder=None, timeout=None, prompt=None,
+            log=print, stall=None):
+    """final=True resumes the reviewer's own session (final round or recheck).
+
+    Streams one line per reviewer step to `log`; aborts (exit 124) on `timeout` total seconds or
+    `stall` seconds without model progress (API retries do not count as progress)."""
     cfg = config.reviewers()[role]
     adapter = ADAPTERS[cfg["adapter"]]
     exe = adapter.binary()
@@ -121,12 +191,60 @@ def run_cli(role, work, transcript_dir, final=False, session=None, folder=None, 
     cmd, fixed_session = adapter.command(exe, cfg, prompt, session, final)
     transcript_dir = Path(transcript_dir)
     transcript_dir.mkdir(parents=True, exist_ok=True)
+    stall = STALL if stall is None else stall
+    t0 = time.monotonic()
+    mark = dict(progress=t0, event=t0, last="started", steps=0)
+
+    def say(msg):
+        e = int(time.monotonic() - t0)
+        log(f"[{role}] {e // 60:02d}:{e % 60:02d} {msg}")
+
+    def pump(stream, out):
+        for line in iter(stream.readline, b""):
+            out.write(line)
+            out.flush()
+            try:
+                obj = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(obj, dict):
+                continue
+            text, progress = describe(obj)
+            now = time.monotonic()
+            mark["event"] = now
+            if progress:
+                mark["progress"] = now
+                mark["steps"] += 1
+            if text:
+                mark["last"] = text
+                say(text)
+
+    reason = None
     with (transcript_dir / "stdout").open("wb") as out, (transcript_dir / "stderr").open("wb") as err:
-        try:
-            code = subprocess.run(cmd, cwd=work, env=_environment(role), stdout=out, stderr=err,
-                                  timeout=timeout).returncode
-        except subprocess.TimeoutExpired:
-            code = 124
+        proc = subprocess.Popen(cmd, cwd=work, env=_environment(role), stdout=subprocess.PIPE, stderr=err)
+        reader = threading.Thread(target=pump, args=(proc.stdout, out), daemon=True)
+        reader.start()
+        beat = t0
+        while proc.poll() is None:
+            time.sleep(1)
+            now = time.monotonic()
+            if timeout and now - t0 > timeout:
+                reason = f"timeout after {timeout}s"
+            elif stall and now - mark["progress"] > stall:
+                reason = f"no model progress for {stall}s (last: {mark['last']})"
+            if reason:
+                say(f"ABORT: {reason}")
+                _kill(proc)
+                break
+            if now - max(mark["event"], beat) >= HEARTBEAT:
+                beat = now
+                say(f"... still running, {mark['steps']} steps, quiet {int(now - mark['event'])}s "
+                    f"(last: {mark['last']})")
+        proc.wait()
+        reader.join(timeout=10)
+    code = 124 if reason else proc.returncode
+    if not reason:
+        say(f"CLI exited {code}")
     raw = (transcript_dir / "stdout").read_text(encoding="utf-8", errors="replace")
     return dict(exit=code, session=fixed_session or session or find_session(raw), raw=raw,
-                model=cfg["model"], transcript=transcript_dir)
+                model=cfg["model"], transcript=transcript_dir, abort=reason)

@@ -48,7 +48,7 @@ prompts/     给人和实施会话看的：operator.md（启动语）、implemen
 config/      审阅者注册表、OpenCode provider 示例
 templates/   checks.json 与任务输入模板
 docs/        操作协议、模型线路、部署
-tests/       离线测试（假审阅者）
+tests/       离线测试（假审阅者、记录总库、上游索引）
 private/ .runtime/ .cache/   本机私有，不入库
 ```
 
@@ -79,6 +79,23 @@ gate.py --db <db> complete "交付回执"
 `checks.json` 示例见 `templates/checks.example.json`，启动语见 `prompts/operator.md`。新增审阅模型只需在 `config/reviewers.json` 加一项，换 CLI 需在 `ro/reviewers.py` 加一个适配器。
 
 任务目录结构：`review.sqlite`（账本：状态、所有封存文件）、`evidence/`（程序证据）、`transcripts/`（CLI 原始输出、`post.json`、探针重跑）、`sealed/`（已通过关卡的材料）、`handoff/`（给实施者的异议）。
+
+## 复用（省时间，不减独立审验）
+
+| 内容 | 复用方式 | 位置 |
+|---|---|---|
+| 依赖环境 | 按依赖文件哈希缓存：依赖不变，换基线、退回重走、各关都共用 | `.cache/envs/` |
+| pip 下载 | 共用下载缓存 | `.cache/envs/pip-cache/` |
+| 基线检出 | 每库一份本地镜像（只含基线，不含候选），各关从镜像检出 | `.cache/mirrors/` |
+| 变异测试 | 结果只取决于补丁+环境，每版本跑一次，各关复用（证据仍各自封存） | `<任务目录>/mutation/` |
+| 上游 issue/PR | 每库一份索引，首次全量，之后只抓更新 | `python -m ro.upstream` |
+
+基线/修复后的定向测试、套件和模型审阅仍然每关独立重跑。
+
+```text
+python -m ro.upstream sync <owner/name> <index.sqlite>     # 增量同步
+python -m ro.upstream export <index.sqlite> <out.json> --state OPEN
+```
 
 ## 记录总库
 
